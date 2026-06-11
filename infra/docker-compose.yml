@@ -1,0 +1,73 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: xeno
+      POSTGRES_PASSWORD: xeno
+      POSTGRES_DB: xeno
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xeno -d xeno"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ../apps/api
+    env_file:
+      - ../.env.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://xeno:xeno@postgres:5432/xeno
+      WORKER_URL: http://worker:9000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      worker:
+        condition: service_started
+
+  worker:
+    build:
+      context: ../apps/worker
+    environment:
+      DATABASE_URL: postgres://xeno:xeno@postgres:5432/xeno
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      API_BASE_URL: http://api:8000
+      WORKER_PORT: 9000
+    ports:
+      - "9000:9000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ../apps/web
+    environment:
+      API_BASE_URL: http://api:8000
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:

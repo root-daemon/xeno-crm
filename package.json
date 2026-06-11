@@ -1,0 +1,23 @@
+{
+  "name": "xeno-agentic-crm",
+  "private": true,
+  "version": "2.0.0",
+  "description": "Agentic Xeno CRM with Next.js, FastAPI, Postgres, Redis, BullMQ, Anthropic and OpenAI.",
+  "workspaces": [
+    "apps/web",
+    "apps/worker"
+  ],
+  "scripts": {
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev:worker": "npm --workspace apps/worker run dev",
+    "test": "npm --workspace apps/worker test && python3 -m pytest apps/api/tests",
+    "lint": "npm --workspace apps/web run lint",
+    "compose:up": "docker compose -f infra/docker-compose.yml up --build",
+    "compose:down": "docker compose -f infra/docker-compose.yml down -v"
+  },
+  "engines": {
+    "node": ">=20",
+    "npm": ">=10",
+    "python": ">=3.11"
+  }
+}

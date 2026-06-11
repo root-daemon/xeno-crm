@@ -1,0 +1,119 @@
+import express from "express";
+import { Worker } from "bullmq";
+import { campaignQueue, channelQueue, connection } from "./queues.js";
+import { query } from "./db.js";
+import { statusPlan } from "./lifecycle.js";
+
+const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:8000";
+const port = Number(process.env.WORKER_PORT ?? 9000);
+
+const app = express();
+app.use(express.json());
+
+app.get("/health", (_request, response) => response.json({ ok: true }));
+
+app.post("/enqueue/campaign-send", async (request, response) => {
+  const { campaign_id } = request.body;
+  if (!campaign_id) return response.status(400).json({ error: "campaign_id required" });
+  const job = await campaignQueue.add("campaign.send", { campaign_id }, {
+    jobId: `campaign.send.${campaign_id}`,
+    attempts: 3,
+    backoff: { type: "exponential", delay: 500 }
+  });
+  response.status(202).json({ queued: true, job_id: job.id });
+});
+
+new Worker("campaign.send", async (job) => {
+  const { campaign_id } = job.data;
+  const [campaign] = await query("select * from campaigns where id = $1", [campaign_id]);
+  if (!campaign) throw new Error(`Unknown campaign ${campaign_id}`);
+
+  await query("update campaigns set status = $1 where id = $2", ["sending", campaign_id]);
+
+  const audience = await query(audienceSql(campaign.segment_rules), audienceParams(campaign.segment_rules));
+  for (const customer of audience) {
+    const communicationId = `msg_${campaign_id}_${customer.id}`;
+    const message = personalize(campaign.message_template, customer);
+    await query(
+      `insert into communications (id, campaign_id, customer_id, channel, recipient, message, status, attributed_revenue, created_at)
+       values ($1, $2, $3, $4, $5::jsonb, $6, 'queued', 0, now())
+       on conflict on constraint uq_campaign_customer do nothing`,
+      [communicationId, campaign_id, customer.id, campaign.channel, JSON.stringify({ name: customer.name, phone: customer.phone, email: customer.email }), message]
+    );
+    await channelQueue.add("channel.deliver", { communication_id: communicationId }, {
+      jobId: `channel.deliver.${communicationId}`,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 500 }
+    });
+  }
+  return { created: audience.length };
+}, { connection });
+
+new Worker("channel.deliver", async (job) => {
+  const [communication] = await query("select * from communications where id = $1", [job.data.communication_id]);
+  if (!communication) throw new Error(`Unknown communication ${job.data.communication_id}`);
+
+  for (const item of statusPlan(communication)) {
+    await sleep(item.delay);
+    const receipt = {
+      event_id: `${communication.id}_${item.status}`,
+      communication_id: communication.id,
+      campaign_id: communication.campaign_id,
+      customer_id: communication.customer_id,
+      status: item.status,
+      occurred_at: new Date().toISOString(),
+      metadata: item.metadata ?? {}
+    };
+    const response = await fetch(`${apiBaseUrl}/receipts`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(receipt)
+    });
+    if (!response.ok) throw new Error(`Receipt failed ${response.status}`);
+  }
+}, { connection });
+
+app.listen(port, () => {
+  console.log(`Worker enqueue API listening on ${port}`);
+});
+
+function audienceSql(rules) {
+  return `select c.*, coalesce(sum(o.total), 0) as lifetime_value, min(o.days_ago) as last_order_days_ago
+          from customers c
+          left join orders o on o.customer_id = c.id
+          where ($1::text is null or c.city = $1::text)
+            and (
+              $6::text is null
+              or ($6::text = 'whatsapp' and c.whatsapp_opt_in = true)
+              or ($6::text = 'sms' and c.sms_opt_in = true)
+              or ($6::text = 'email' and c.email_opt_in = true)
+              or ($6::text = 'rcs' and c.rcs_opt_in = true)
+            )
+          group by c.id
+          having ($2::float is null or coalesce(sum(o.total), 0) >= $2::float)
+             and ($3::int is null or min(o.days_ago) >= $3::int)
+             and ($4::int is null or min(o.days_ago) <= $4::int)
+             and ($5::text is null or c.tags::jsonb ? $5::text)`;
+}
+
+function audienceParams(rules) {
+  return [
+    rules.city ?? null,
+    rules.min_lifetime_value ?? null,
+    rules.min_last_order_days_ago ?? null,
+    rules.max_last_order_days_ago ?? null,
+    rules.tag ?? null,
+    rules.channel ?? null
+  ];
+}
+
+function personalize(template, customer) {
+  return template
+    .replaceAll("{{name}}", customer.name.split(" ")[0])
+    .replaceAll("{{city}}", customer.city)
+    .replaceAll("{{tier}}", customer.loyalty_tier);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
