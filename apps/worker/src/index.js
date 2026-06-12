@@ -5,7 +5,7 @@ import { query } from "./db.js";
 import { statusPlan } from "./lifecycle.js";
 
 const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:8000";
-const port = Number(process.env.WORKER_PORT ?? 9000);
+const port = Number(process.env.PORT ?? process.env.WORKER_PORT ?? 9000);
 
 const app = express();
 app.use(express.json());

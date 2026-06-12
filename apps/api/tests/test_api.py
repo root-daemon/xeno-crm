@@ -1,5 +1,6 @@
 import os
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
@@ -35,6 +36,73 @@ def test_agent_plan_is_structured():
     assert payload["agent_run_id"]
     assert payload["plan"]["requires_approval"] is True
     assert payload["plan"]["recommended_channel"] == "sms"
+
+
+def test_agent_uses_anthropic_structured_plan(monkeypatch):
+    from app import agent
+    from app.config import settings
+
+    class FakeAnthropic:
+        def __init__(self, api_key):
+            assert api_key == "test-anthropic-key"
+            self.messages = self
+
+        def create(self, **kwargs):
+            assert kwargs["model"] == settings.anthropic_model
+            return SimpleNamespace(content=[
+                SimpleNamespace(text="""{
+                    "campaign_name": "AI VIP Push",
+                    "recommended_segment": {
+                        "rules": {"channel": "whatsapp", "min_lifetime_value": 7000},
+                        "reasoning": "Prioritize high-value opted-in shoppers."
+                    },
+                    "recommended_channel": "whatsapp",
+                    "message_variants": [{"label": "vip", "template": "Hi {{name}}, your private edit is ready."}],
+                    "risk_notes": ["Requires marketer approval before send."]
+                }""")
+            ])
+
+    monkeypatch.setattr(settings, "anthropic_api_key", "test-anthropic-key")
+    monkeypatch.setattr(settings, "openai_api_key", None)
+    monkeypatch.setattr(agent, "Anthropic", FakeAnthropic)
+
+    response = client.post("/agent/campaign-plan", json={"goal": "Reach premium VIP customers"})
+    assert response.status_code == 200
+    plan = response.json()["plan"]
+    assert plan["model"] == settings.anthropic_model
+    assert plan["campaign_name"] == "AI VIP Push"
+    assert plan["recommended_segment"]["rules"] == {"channel": "whatsapp", "min_lifetime_value": 7000.0}
+    assert plan["expected_audience_size"] == 3
+    assert any(call["tool"] == "anthropic_campaign_planner" for call in plan["tool_calls"])
+
+
+def test_agent_uses_openai_embeddings_for_insights(monkeypatch):
+    from app import agent
+    from app.config import settings
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            assert api_key == "test-openai-key"
+            self.embeddings = self
+
+        def create(self, **kwargs):
+            assert kwargs["model"] == settings.openai_embedding_model
+            vectors = [[1.0, 0.0]]
+            vectors.extend([[1.0, 0.0] for _ in kwargs["input"][1:]])
+            return SimpleNamespace(data=[SimpleNamespace(embedding=vector) for vector in vectors])
+
+    monkeypatch.setattr(settings, "anthropic_api_key", None)
+    monkeypatch.setattr(settings, "openai_api_key", "test-openai-key")
+    monkeypatch.setattr(agent, "OpenAI", FakeOpenAI)
+
+    response = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"})
+    assert response.status_code == 200
+    plan = response.json()["plan"]
+    assert plan["model"] == "local-deterministic-fallback"
+    assert plan["audience_insights"]
+    retrieval_call = next(call for call in plan["tool_calls"] if call["tool"] == "retrieve_audience_insights")
+    assert retrieval_call["provider"] == "openai"
+    assert retrieval_call["model"] == settings.openai_embedding_model
 
 
 def test_campaign_requires_approval_before_send():

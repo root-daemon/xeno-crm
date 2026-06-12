@@ -10,7 +10,7 @@ connect_args = {"check_same_thread": False} if settings.database_url.startswith(
 engine_kwargs = {"connect_args": connect_args, "pool_pre_ping": True}
 if settings.database_url.startswith("sqlite"):
     engine_kwargs["poolclass"] = StaticPool
-engine = create_engine(settings.database_url, **engine_kwargs)
+engine = create_engine(settings.database_url_alchemy, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
