@@ -21,7 +21,12 @@ from .time import utc_now
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if settings.run_migrations_on_startup:
-        run_migrations()
+        try:
+            run_migrations()
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"Migration failed: {exc}") from exc
     yield
 
 
