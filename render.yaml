@@ -22,8 +22,8 @@ services:
     name: xeno-worker
     runtime: node
     rootDir: apps/worker
-    buildCommand: npm install
-    startCommand: node src/index.js
+    buildCommand: bun install
+    startCommand: bun run start
     plan: free
     envVars:
       - key: DATABASE_URL

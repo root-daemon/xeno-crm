@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .services import customer_rows, preview_segment
+from .services import customer_detail, customer_rows, preview_segment
 
 try:
     from openai import OpenAI
@@ -111,6 +111,10 @@ AGENT_TOOLS = [
                 "properties": {
                     "campaign_name": {"type": "string"},
                     "recommended_channel": {"type": "string", "enum": sorted(ALLOWED_CHANNELS)},
+                    "channel_priority": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": sorted(ALLOWED_CHANNELS)},
+                    },
                     "recommended_segment": {
                         "type": "object",
                         "properties": {
@@ -162,6 +166,150 @@ def build_campaign_plan(db: Session, goal: str, requested_model: str | None = No
             *plan["tool_calls"],
         ]
         return plan
+
+
+def refine_campaign_plan(
+    db: Session,
+    prior_plan: dict[str, Any],
+    instruction: str,
+    requested_model: str | None = None,
+) -> dict[str, Any]:
+    base_goal = str(prior_plan.get("goal") or prior_plan.get("campaign_name") or "Refine this CRM campaign")
+    refined_goal = (
+        f"{base_goal}\n\nExisting approved-shape plan JSON:\n"
+        f"{json.dumps(prior_plan, default=str)[:5000]}\n\n"
+        f"Marketer refinement instruction: {instruction}\n\n"
+        "Return a complete replacement plan, not a patch."
+    )
+    return build_campaign_plan(db, refined_goal, requested_model)
+
+
+def personalize_message(
+    db: Session,
+    campaign_id: str,
+    customer_id: str,
+    template: str,
+    goal: str,
+    channel: str,
+    variant_label: str | None = None,
+    requested_model: str | None = None,
+) -> dict[str, Any]:
+    customer = customer_detail(db, customer_id)
+    if not customer:
+        raise ValueError(f"unknown customer_id: {customer_id}")
+    fallback = local_personalized_message(template, customer, goal, channel, variant_label)
+    model_id = resolve_model_id(requested_model)
+
+    if not settings.openrouter_api_key or OpenAI is None:
+        return {"message": fallback, "model": "local-deterministic-fallback", "fallback": True}
+
+    try:
+        message = call_openrouter_personalization(customer, template, goal, channel, variant_label, model_id)
+        return {"message": sanitize_message(message, fallback), "model": model_id, "fallback": False}
+    except Exception as exc:
+        return {
+            "message": fallback,
+            "model": f"{model_id}-fallback",
+            "fallback": True,
+            "error": str(exc),
+        }
+
+
+def local_personalized_message(
+    template: str,
+    customer: dict[str, Any],
+    goal: str,
+    channel: str,
+    variant_label: str | None = None,
+) -> str:
+    message = (
+        template.replace("{{name}}", str(customer["name"]).split(" ")[0])
+        .replace("{{city}}", str(customer["city"]))
+        .replace("{{tier}}", str(customer["loyalty_tier"]))
+    )
+    tags = ", ".join(customer.get("tags") or [])
+    if tags and len(message) < 220:
+        message = f"{message} Picked around your {tags.split(', ')[0]} interest."
+    last_order = customer.get("last_order_days_ago")
+    if last_order is not None and int(last_order) >= 45 and len(message) < 240:
+        message = f"{message} It has been {last_order} days since your last order."
+    if variant_label and len(message) < 260:
+        message = f"{message} [{variant_label}]"
+    return sanitize_message(message, template)
+
+
+def call_openrouter_personalization(
+    customer: dict[str, Any],
+    template: str,
+    goal: str,
+    channel: str,
+    variant_label: str | None,
+    model_id: str,
+) -> str:
+    client = OpenAI(  # type: ignore[operator]
+        api_key=settings.openrouter_api_key,
+        base_url=settings.openrouter_base_url,
+    )
+    response = client.chat.completions.create(
+        model=model_id,
+        max_tokens=180,
+        temperature=0.35,
+        response_format={"type": "json_object"},
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Write one concise CRM outbound message for exactly one shopper. "
+                    "Return only JSON: {\"message\":\"...\"}. Do not invent discounts, "
+                    "links, personal data, or claims not present in the input. Keep placeholders resolved."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps({
+                    "goal": goal,
+                    "channel": channel,
+                    "variant_label": variant_label,
+                    "base_template": template,
+                    "customer": {
+                        "name": customer["name"],
+                        "city": customer["city"],
+                        "loyalty_tier": customer["loyalty_tier"],
+                        "tags": customer.get("tags", []),
+                        "lifetime_value": customer.get("lifetime_value", 0),
+                        "last_order_days_ago": customer.get("last_order_days_ago"),
+                        "purchase_history": order_rows_for_prompt(customer),
+                    },
+                }),
+            },
+        ],
+    )
+    text = response.choices[0].message.content
+    if not text:
+        raise ValueError("personalization response did not include content")
+    payload = json.loads(text)
+    if not isinstance(payload, dict) or not payload.get("message"):
+        raise ValueError("personalization response missing message")
+    return str(payload["message"])
+
+
+def order_rows_for_prompt(customer: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "total": item.get("total"),
+            "items": item.get("items", []),
+            "channel": item.get("channel"),
+            "days_ago": item.get("days_ago"),
+        }
+        for item in (customer.get("purchase_history") or [])[:5]
+    ]
+
+
+def sanitize_message(message: str, fallback: str) -> str:
+    cleaned = " ".join(str(message or "").split())
+    if not cleaned:
+        return " ".join(str(fallback).split())[:320]
+    return cleaned[:320]
 
 
 def _finalize_fallback(
@@ -433,6 +581,7 @@ def build_local_plan(db: Session, goal: str, rows: list[dict[str, Any]], insight
             "reasoning": f"Matched {len(audience)} shoppers from {len(rows)} profiles using behavioral and opt-in filters.",
         },
         "recommended_channel": rules["channel"],
+        "channel_priority": [rules["channel"], *[channel for channel in ["whatsapp", "sms", "email", "rcs"] if channel != rules["channel"]]],
         "message_variants": [
             {"label": "direct", "template": message},
             {"label": "softer", "template": f"Hi {{{{name}}}}, your {offer} is waiting. Explore a personalized edit picked for you."},
@@ -462,6 +611,7 @@ def normalize_plan(db: Session, goal: str, payload: dict[str, Any], fallback_pla
     audience = preview_segment(db, rules)
     variants = sanitize_variants(payload.get("message_variants"), fallback_plan["message_variants"])
     risk_notes = payload.get("risk_notes") if isinstance(payload.get("risk_notes"), list) else fallback_plan["risk_notes"]
+    channel_priority = sanitize_channel_priority(payload.get("channel_priority"), channel)
 
     return {
         "campaign_name": str(payload.get("campaign_name") or fallback_plan["campaign_name"])[:180],
@@ -471,6 +621,7 @@ def normalize_plan(db: Session, goal: str, payload: dict[str, Any], fallback_pla
             "reasoning": str(payload.get("recommended_segment", {}).get("reasoning") or fallback_plan["recommended_segment"]["reasoning"]),
         },
         "recommended_channel": channel,
+        "channel_priority": channel_priority,
         "message_variants": variants,
         "risk_notes": [str(note) for note in risk_notes][:5],
         "audience_insights": fallback_plan.get("audience_insights", []),
@@ -516,6 +667,18 @@ def sanitize_variants(raw_variants: Any, fallback_variants: list[dict[str, str]]
         if len(variants) == 3:
             break
     return variants or fallback_variants
+
+
+def sanitize_channel_priority(raw_priority: Any, primary: str) -> list[str]:
+    priority = [primary]
+    if isinstance(raw_priority, list):
+        for item in raw_priority:
+            if item in ALLOWED_CHANNELS and item not in priority:
+                priority.append(item)
+    for item in ["whatsapp", "sms", "email", "rcs"]:
+        if item not in priority:
+            priority.append(item)
+    return priority
 
 
 def customer_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -568,4 +731,3 @@ def count_by(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
         value = str(row[key])
         counts[value] = counts.get(value, 0) + 1
     return counts
-

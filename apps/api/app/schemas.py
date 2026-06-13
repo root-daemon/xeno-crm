@@ -23,6 +23,7 @@ class CustomerIn(BaseModel):
     sms_opt_in: bool = True
     email_opt_in: bool = True
     rcs_opt_in: bool = False
+    global_opt_out: bool = False
     last_active_days_ago: int = Field(default=0, ge=0)
 
 
@@ -33,6 +34,8 @@ class OrderIn(BaseModel):
     items: list[str] = Field(default_factory=list)
     channel: OrderChannel
     days_ago: int = Field(ge=0)
+    attributed_communication_id: Optional[str] = None
+    attributed_campaign_id: Optional[str] = None
 
 
 class CustomerOut(CustomerIn):
@@ -80,8 +83,24 @@ class AgentPlanRequest(BaseModel):
     model: Optional[str] = Field(default=None, max_length=160)
 
 
+class AgentPlanRefineRequest(BaseModel):
+    prior_plan: dict[str, Any]
+    instruction: str = Field(min_length=3, max_length=1000)
+    model: Optional[str] = Field(default=None, max_length=160)
+
+
 class SegmentFromPromptRequest(BaseModel):
     prompt: str = Field(min_length=3, max_length=1000)
+    model: Optional[str] = Field(default=None, max_length=160)
+
+
+class PersonalizeMessageRequest(BaseModel):
+    campaign_id: str = Field(min_length=1)
+    customer_id: str = Field(min_length=1)
+    template: str = Field(min_length=1)
+    goal: str = Field(min_length=1)
+    channel: Channel
+    variant_label: Optional[str] = Field(default=None, max_length=80)
     model: Optional[str] = Field(default=None, max_length=160)
 
 

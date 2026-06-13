@@ -1,4 +1,5 @@
 import { api, Customer } from "../../lib/api";
+import { CsvImporter } from "./csv-importer";
 import { CustomerList } from "./customer-list";
 
 export default async function CustomersPage() {
@@ -17,6 +18,7 @@ export default async function CustomersPage() {
           <p className="muted">Shopper profiles enriched with order-derived attributes.</p>
         </div>
       </div>
+      <CsvImporter />
       <CustomerList customers={customers} />
     </>
   );

@@ -89,6 +89,8 @@ export function CampaignPerformanceView({
         <Metric label="Clicked" value={performance.counts.clicked ?? 0} />
         <Metric label="Purchased" value={performance.counts.purchased ?? 0} />
         <Metric label="Failed" value={performance.counts.failed ?? 0} />
+        <Metric label="Suppressed" value={performance.suppression?.suppressed ?? 0} />
+        <Metric label="Attributed Orders" value={performance.attribution?.orders ?? 0} />
         <Metric label="Revenue" value={money.format(performance.revenue)} />
       </section>
       <div className="grid two section-gap">
@@ -121,6 +123,32 @@ export function CampaignPerformanceView({
         <section className="panel">
           <h2><BarChart3 size={17} /> Failure by Tier</h2>
           <RateList items={analysis.charts?.failure_by_loyalty_tier ?? []} />
+        </section>
+      </div>
+      <div className="grid two section-gap">
+        <section className="panel">
+          <h2><BarChart3 size={17} /> A/B Variants</h2>
+          {performance.variants?.length ? (
+            <div className="failure-table">
+              {performance.variants.map((variant) => (
+                <div className="failure-row" key={variant.label}>
+                  <strong>{variant.label}</strong>
+                  <span>{variant.sent} sent</span>
+                  <span>{variant.clicked} clicked</span>
+                  <span>{variant.converted} purchased · {money.format(variant.revenue)}</span>
+                </div>
+              ))}
+            </div>
+          ) : <p className="muted">Variant metrics appear after send.</p>}
+        </section>
+        <section className="panel">
+          <h2>Suppression & Attribution</h2>
+          <div className="split-list">
+            <div className="row">Global opt-out suppressed: {performance.suppression?.global_opt_out ?? 0}</div>
+            <div className="row">Frequency cap suppressed: {performance.suppression?.frequency_cap ?? 0}</div>
+            <div className="row">Attribution window: {performance.attribution?.window_days ?? 7} days</div>
+            <div className="row">Attributed revenue: {money.format(performance.attribution?.revenue ?? 0)}</div>
+          </div>
         </section>
       </div>
       <div className="grid two section-gap">

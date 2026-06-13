@@ -47,7 +47,7 @@ export type Campaign = {
   created_at: string;
   segment_rules: Record<string, unknown>;
   message_template: string;
-  approved_plan?: Record<string, unknown>;
+  approved_plan?: Record<string, unknown> & { channel_priority?: string[] };
 };
 
 export type Customer = {
@@ -63,6 +63,7 @@ export type Customer = {
   sms_opt_in: boolean;
   email_opt_in: boolean;
   rcs_opt_in: boolean;
+  global_opt_out: boolean;
   last_active_days_ago: number;
   order_count: number;
   lifetime_value: number;
@@ -78,6 +79,8 @@ export type Order = {
   items: string[];
   channel: string;
   days_ago: number;
+  attributed_communication_id?: string | null;
+  attributed_campaign_id?: string | null;
   created_at: string | null;
 };
 
@@ -104,6 +107,25 @@ export type Performance = {
   audience_size: number;
   counts: Record<string, number>;
   revenue: number;
+  suppression?: {
+    global_opt_out: number;
+    frequency_cap: number;
+    suppressed: number;
+    sendable: number;
+  };
+  attribution?: {
+    window_days: number;
+    orders: number;
+    revenue: number;
+    legacy_revenue: number;
+  };
+  variants?: {
+    label: string;
+    sent: number;
+    clicked: number;
+    converted: number;
+    revenue: number;
+  }[];
   communications: {
     id: string;
     campaign_id: string;
@@ -111,6 +133,9 @@ export type Performance = {
     channel: string;
     recipient: Record<string, unknown>;
     message: string;
+    variant_label?: string | null;
+    channel_priority?: string[];
+    fallback_of_communication_id?: string | null;
     status: string;
     attributed_revenue: number;
     created_at: string | null;

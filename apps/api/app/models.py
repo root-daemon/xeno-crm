@@ -64,6 +64,8 @@ class Customer(Base):
     sms_opt_in: Mapped[bool] = mapped_column(Boolean, default=True)
     email_opt_in: Mapped[bool] = mapped_column(Boolean, default=True)
     rcs_opt_in: Mapped[bool] = mapped_column(Boolean, default=False)
+    global_opt_out: Mapped[bool] = mapped_column(Boolean, default=False)
+    unsubscribed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_active_days_ago: Mapped[int] = mapped_column(Integer, default=0)
 
     orders: Mapped[list["Order"]] = relationship(back_populates="customer")
@@ -78,6 +80,9 @@ class Order(Base):
     items: Mapped[list[str]] = mapped_column(JsonType, default=list)
     channel: Mapped[str] = mapped_column(String(40))
     days_ago: Mapped[int] = mapped_column(Integer)
+    attributed_communication_id: Mapped[Optional[str]] = mapped_column(ForeignKey("communications.id"), nullable=True)
+    attributed_campaign_id: Mapped[Optional[str]] = mapped_column(ForeignKey("campaigns.id"), nullable=True)
+    attributed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     customer: Mapped[Customer] = relationship(back_populates="orders")
@@ -142,6 +147,9 @@ class Communication(Base):
     channel: Mapped[str] = mapped_column(String(40))
     recipient: Mapped[dict] = mapped_column(JsonType, default=dict)
     message: Mapped[str] = mapped_column(Text)
+    variant_label: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    channel_priority: Mapped[list[str]] = mapped_column(JsonType, default=list)
+    fallback_of_communication_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String(40), default=CommunicationStatus.queued.value)
     attributed_revenue: Mapped[float] = mapped_column(Float, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

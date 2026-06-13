@@ -11,6 +11,7 @@ type PlanResponse = {
     campaign_name: string;
     goal: string;
     recommended_channel: string;
+    channel_priority?: string[];
     recommended_segment: { rules: Record<string, unknown>; reasoning: string };
     message_variants: { label: string; template: string }[];
     risk_notes: string[];
@@ -42,6 +43,7 @@ export function AgentCampaignForm({ initialGoal }: { initialGoal?: string }) {
   const [modelId, setModelId] = useState(DEFAULT_MODEL_ID);
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
+  const [refineInstruction, setRefineInstruction] = useState("Make it punchier and prefer WhatsApp, then SMS fallback.");
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("");
   const [isWorking, setIsWorking] = useState(false);
@@ -89,6 +91,27 @@ export function AgentCampaignForm({ initialGoal }: { initialGoal?: string }) {
       });
       setCampaignId(campaign.id);
       setStatus("Draft created. Approval is required before sending.");
+    } catch (err) {
+      setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
+  async function refinePlan() {
+    if (!plan) return;
+    setIsWorking(true);
+    setStatus("Refining the plan with the agent...");
+    try {
+      const result = await post<PlanResponse>("/api/agent/campaign-plan/refine", {
+        prior_plan: plan.plan,
+        instruction: refineInstruction,
+        model: modelId,
+      });
+      setPlan(result);
+      setSelectedVariantIndex(0);
+      setCampaignId(null);
+      setStatus("Refined plan ready. Review it before creating the draft.");
     } catch (err) {
       setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -155,6 +178,9 @@ export function AgentCampaignForm({ initialGoal }: { initialGoal?: string }) {
               <p className="muted">
                 {plan.plan.recommended_channel.toUpperCase()} · {plan.plan.expected_audience_size} shoppers
               </p>
+              {plan.plan.channel_priority?.length ? (
+                <p className="muted">Fallback order: {plan.plan.channel_priority.map((item) => item.toUpperCase()).join(" -> ")}</p>
+              ) : null}
               <p>{plan.plan.recommended_segment.reasoning}</p>
               {plan.plan.model && (
                 <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
@@ -183,6 +209,18 @@ export function AgentCampaignForm({ initialGoal }: { initialGoal?: string }) {
               {plan.plan.risk_notes.map((note) => (
                 <span className="chip" key={note}>{note}</span>
               ))}
+            </div>
+            <div className="row">
+              <strong>Refine with Agent</strong>
+              <textarea
+                value={refineInstruction}
+                onChange={(event) => setRefineInstruction(event.target.value)}
+                disabled={isWorking || !!campaignId}
+                style={{ marginTop: 8 }}
+              />
+              <button className="button secondary" disabled={isWorking || !!campaignId || !refineInstruction.trim()} onClick={refinePlan}>
+                <Sparkles size={18} />Refine Plan
+              </button>
             </div>
             <button className="button secondary" disabled={isWorking || !!campaignId} onClick={createDraft}>
               <CheckCircle size={18} />Create Draft

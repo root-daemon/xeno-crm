@@ -20,8 +20,7 @@ flowchart LR
   ChannelWorker --> ReceiptAPI["FastAPI /receipts"]
   ReceiptAPI --> PG
   API --> Agent["AI Agent Layer"]
-  Agent --> Anthropic["Anthropic Claude"]
-  Agent --> OpenAI["OpenAI Embeddings"]
+  Agent --> OpenRouter["OpenRouter Models"]
 ```
 
 ## Services
@@ -33,11 +32,17 @@ flowchart LR
 
 ## AI Features
 
-- Campaign planning with schema-validated structured output, served through a single OpenRouter gateway (one key, swappable models: Gemini, Claude, Qwen).
+- Campaign planning with real tool calls, served through a single OpenRouter gateway (one key, swappable models: Gemini, Claude, Qwen).
+- Natural-language segment generation through `/agent/segment`.
+- Per-recipient AI personalization during queued fan-out, with deterministic fallback when OpenRouter is unavailable.
+- Conversational campaign refinement before draft creation.
 - Deterministic local fallback when the model is rate-limited or the key is absent, so the planner never hard-fails and reviewers can always run the app.
 - Approval-gated execution: the agent can draft campaigns but cannot send without marketer approval.
 - Agent tool trace persisted in `agent_runs`.
-- Post-campaign agent analysis summarizes results, charts funnel/failure patterns, and recommends next actions.
+- Post-campaign AI analysis summarizes results, charts funnel/failure patterns, compares A/B variants, and recommends next actions.
+- Suppression and frequency capping exclude globally opted-out shoppers and shoppers messaged in the last 7 days.
+- Best-channel delivery chooses the first opted-in channel from the plan's channel priority and retries retryable failures on the next channel.
+- Conversion receipts create attributed orders so campaign revenue is tied back to communications.
 
 ## Deploy (Vercel + Render + RDS + Upstash)
 
@@ -69,8 +74,8 @@ flowchart LR
 |-----|-------|
 | `DATABASE_URL` | RDS connection string (`postgresql://postgres:pw@endpoint.rds.amazonaws.com:5432/postgres`) |
 | `WORKER_URL` | Public URL of xeno-worker (e.g. `https://xeno-worker.onrender.com`) |
-| `ANTHROPIC_API_KEY` | Your key (optional — falls back to deterministic planner) |
-| `OPENAI_API_KEY` | Your key (optional — falls back to local similarity) |
+| `OPENROUTER_API_KEY` | Your key (optional — falls back to deterministic planner/personalization/analysis) |
+| `OPENROUTER_MODEL` | Optional model slug; defaults to `google/gemini-2.5-flash` |
 
 **xeno-worker:**
 | Key | Value |
@@ -91,7 +96,7 @@ flowchart LR
 | `API_BASE_URL` | Same xeno-api URL (server-side fetch from route handlers) |
 | `OPENROUTER_API_KEY` | OpenRouter key — powers the AI campaign planner. Get one at [openrouter.ai/keys](https://openrouter.ai/keys) |
 
-The campaign planner defaults to `google/gemini-2.5-flash` (~$0.0005 per plan). If the model is rate-limited or the key is missing, the planner automatically degrades to a deterministic plan so the demo never breaks.
+The campaign planner defaults to `google/gemini-2.5-flash` (~$0.0005 per plan). If the model is rate-limited or the key is missing, planning, personalization, refinement, and analysis degrade to deterministic fallbacks so the demo never breaks.
 
 Deploy. Your frontend URL is the live product URL.
 
@@ -130,6 +135,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -q
 
 # Worker
 bun --cwd apps/worker test
+
+# Web
+bun --cwd apps/web run build
 ```
 
 ## Demo Flow
@@ -138,14 +146,20 @@ bun --cwd apps/worker test
 2. Open `Campaigns -> New Agent Campaign`.
 3. Ask: `Win back shoppers who have not purchased in 60 days with a personalized WhatsApp or SMS offer.`
 4. Review the agent plan and create a campaign draft.
-5. Approve and send.
-6. Watch the fake channel service callbacks update performance, failure-cause charts, and AI post-campaign analysis.
+5. Optionally refine the plan conversationally.
+6. Approve and send.
+7. Watch BullMQ callbacks update performance, suppression, attribution, A/B variant metrics, failure-cause charts, and AI post-campaign analysis.
 
 ## Scale Decisions
 
 - Postgres is the durable source of truth.
 - Redis is only queue/transient infrastructure.
 - BullMQ workers isolate high-volume dispatch and channel lifecycle simulation from API requests.
+- The worker suppresses global opt-outs and shoppers messaged in the last 7 days before creating communications.
+- Message variants are assigned deterministically per shopper for A/B reporting.
+- Per-recipient personalization is requested from the API during fan-out and falls back locally on failure.
+- Channel fallback is driven by plan channel priority and shopper opt-ins.
 - The CRM calls a separate fake channel `/send` endpoint per recipient; that service returns `accepted` and later calls back with delivery and engagement receipts.
 - Receipt ingestion is idempotent and preserves highest lifecycle state when events arrive out of order.
+- Conversion receipts create attributed orders within the campaign revenue model; legacy seeded communication revenue remains supported.
 - The channel service remains stubbed as required by the assignment.

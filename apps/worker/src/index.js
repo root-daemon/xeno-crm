@@ -58,7 +58,8 @@ async function sendHandler(request, response) {
       provider_message_id: providerMessageId,
       campaign_id: campaignId,
       customer_id: customerId,
-      callback_url: callbackUrl
+      callback_url: callbackUrl,
+      channel
     },
     {
       jobId: `channel.deliver.${communicationId}`,
@@ -84,13 +85,28 @@ new Worker("campaign.send", async (job) => {
 
   const audience = await query(audienceSql(campaign.segment_rules), audienceParams(campaign.segment_rules));
   for (const customer of audience) {
+    if (customer.global_opt_out || await recentlyMessaged(customer.id, campaign_id)) continue;
     const communicationId = `msg_${campaign_id}_${customer.id}`;
-    const message = personalize(campaign.message_template, customer);
+    const variants = messageVariants(campaign);
+    const variant = variants[checksum(customer.id) % variants.length];
+    const channelPriority = channelPriorityFor(campaign);
+    const chosenChannel = chooseChannel(customer, channelPriority);
+    if (!chosenChannel) continue;
+    const message = await personalizedMessage(campaign, customer, variant, chosenChannel);
     await query(
-      `insert into communications (id, campaign_id, customer_id, channel, recipient, message, status, attributed_revenue, created_at)
-       values ($1, $2, $3, $4, $5::jsonb, $6, 'queued', 0, now())
+      `insert into communications (id, campaign_id, customer_id, channel, recipient, message, variant_label, channel_priority, status, attributed_revenue, created_at)
+       values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, 'queued', 0, now())
        on conflict on constraint uq_campaign_customer do nothing`,
-      [communicationId, campaign_id, customer.id, campaign.channel, JSON.stringify({ name: customer.name, phone: customer.phone, email: customer.email }), message]
+      [
+        communicationId,
+        campaign_id,
+        customer.id,
+        chosenChannel,
+        JSON.stringify({ name: customer.name, phone: customer.phone, email: customer.email }),
+        message,
+        variant.label,
+        JSON.stringify(channelPriority)
+      ]
     );
     const channelResponse = await fetch(`${channelServiceUrl}/send`, {
       method: "POST",
@@ -100,7 +116,7 @@ new Worker("campaign.send", async (job) => {
         customerId: customer.id,
         communicationId,
         recipient: { name: customer.name, phone: customer.phone, email: customer.email },
-        channel: campaign.channel,
+        channel: chosenChannel,
         message,
         callbackUrl: `${apiBaseUrl}/receipts`
       })
@@ -114,12 +130,13 @@ new Worker("channel.deliver", async (job) => {
   const [communication] = await query("select * from communications where id = $1", [job.data.communication_id]);
   if (!communication) throw new Error(`Unknown communication ${job.data.communication_id}`);
 
+  const channel = job.data.channel ?? communication.channel;
   for (const item of statusPlan(communication)) {
     await sleep(item.delay);
     const providerMessageId = job.data.provider_message_id ?? communication.id;
     const occurredAt = new Date().toISOString();
     const receipt = {
-      event_id: `${communication.id}_${item.status}`,
+      event_id: `${communication.id}_${channel}_${item.status}`,
       communication_id: communication.id,
       providerMessageId,
       campaign_id: communication.campaign_id,
@@ -135,6 +152,9 @@ new Worker("channel.deliver", async (job) => {
       body: JSON.stringify(receipt)
     });
     if (!response.ok) throw new Error(`Receipt failed ${response.status}`);
+    if (item.status === "failed" && item.metadata?.retryable) {
+      await enqueueFallbackChannel(communication, channel, job.data.callback_url);
+    }
   }
 }, { connection, concurrency: 10 });
 
@@ -160,6 +180,88 @@ function audienceSql(rules) {
              and ($3::int is null or min(o.days_ago) >= $3::int)
              and ($4::int is null or min(o.days_ago) <= $4::int)
              and ($5::text is null or c.tags::jsonb ? $5::text)`;
+}
+
+async function recentlyMessaged(customerId, campaignId) {
+  const rows = await query(
+    `select id from communications
+     where customer_id = $1 and campaign_id <> $2 and created_at >= now() - interval '7 days'
+     limit 1`,
+    [customerId, campaignId]
+  );
+  return rows.length > 0;
+}
+
+function messageVariants(campaign) {
+  const plan = campaign.approved_plan ?? {};
+  const variants = Array.isArray(plan.message_variants) ? plan.message_variants : [];
+  return variants.length ? variants : [{ label: "selected", template: campaign.message_template }];
+}
+
+function channelPriorityFor(campaign) {
+  const plan = campaign.approved_plan ?? {};
+  const priority = Array.isArray(plan.channel_priority) ? plan.channel_priority : [campaign.channel];
+  return [...new Set([...priority, campaign.channel, "whatsapp", "sms", "email", "rcs"])]
+    .filter((channel) => ["whatsapp", "sms", "email", "rcs"].includes(channel));
+}
+
+function chooseChannel(customer, priority) {
+  return priority.find((channel) => customer[`${channel}_opt_in`]);
+}
+
+async function personalizedMessage(campaign, customer, variant, channel) {
+  try {
+    const response = await fetch(`${apiBaseUrl}/agent/personalize-message`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        campaign_id: campaign.id,
+        customer_id: customer.id,
+        template: variant.template ?? campaign.message_template,
+        goal: campaign.goal,
+        channel,
+        variant_label: variant.label ?? "variant"
+      })
+    });
+    if (response.ok) {
+      const payload = await response.json();
+      if (payload.message) return payload.message;
+    }
+  } catch { /* local fallback below */ }
+  return personalize(variant.template ?? campaign.message_template, customer);
+}
+
+async function enqueueFallbackChannel(communication, failedChannel, callbackUrl) {
+  const priority = Array.isArray(communication.channel_priority) ? communication.channel_priority : [];
+  const rows = await query("select * from customers where id = $1", [communication.customer_id]);
+  const customer = rows[0];
+  if (!customer) return;
+  const failedIndex = priority.indexOf(failedChannel);
+  const remaining = priority.slice(failedIndex >= 0 ? failedIndex + 1 : 0);
+  const nextChannel = chooseChannel(customer, remaining);
+  if (!nextChannel) return;
+  await query(
+    "update communications set channel = $1, status = 'queued', fallback_of_communication_id = coalesce(fallback_of_communication_id, id) where id = $2",
+    [nextChannel, communication.id]
+  );
+  await channelQueue.add(
+    "channel.deliver",
+    {
+      communication_id: communication.id,
+      provider_message_id: communication.id,
+      campaign_id: communication.campaign_id,
+      customer_id: communication.customer_id,
+      callback_url: callbackUrl ?? `${apiBaseUrl}/receipts`,
+      channel: nextChannel
+    },
+    {
+      jobId: `channel.deliver.${communication.id}.${nextChannel}`,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 500 },
+      removeOnComplete: true,
+      removeOnFail: false
+    }
+  );
 }
 
 function audienceParams(rules) {
