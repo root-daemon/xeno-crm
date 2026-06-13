@@ -3,10 +3,12 @@
 import { useMemo, useState } from "react";
 import { Save, Sparkles } from "lucide-react";
 import { CLIENT_API_BASE, Customer, Segment, SegmentRules } from "../../lib/api";
+import { SETTINGS_KEY } from "../../lib/ai-models";
 
 const emptyRules: SegmentRules = {};
 
 type Preview = { audience: Customer[] };
+type AiSegment = { rules: SegmentRules; reasoning: string; audience_size: number; audience: Customer[]; model: string };
 
 export function SegmentBuilder({ initialSegments }: { initialSegments: Segment[] }) {
   const [segments, setSegments] = useState(initialSegments);
@@ -55,10 +57,20 @@ export function SegmentBuilder({ initialSegments }: { initialSegments: Segment[]
   }
 
   async function buildWithAi() {
-    const nextRules = rulesFromPrompt(prompt);
-    setRules(nextRules);
-    setStatus("AI generated rules. Previewing audience...");
-    await preview(nextRules);
+    setStatus("Asking the AI to design a segment...");
+    try {
+      const model = typeof window !== "undefined" ? localStorage.getItem(SETTINGS_KEY) ?? undefined : undefined;
+      const result = await post<AiSegment>("/agent/segment", { prompt, model });
+      setRules(result.rules);
+      setAudience(result.audience ?? []);
+      const via = result.model.includes("fallback") ? "local heuristic" : result.model;
+      setStatus(`${result.reasoning} — ${result.audience_size} customers (via ${via})`);
+    } catch {
+      const nextRules = rulesFromPrompt(prompt);
+      setRules(nextRules);
+      setStatus("AI unavailable — used local heuristic. Previewing audience...");
+      await preview(nextRules);
+    }
   }
 
   return (

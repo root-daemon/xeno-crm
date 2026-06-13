@@ -9,11 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import models
-from .agent import build_campaign_plan
+from .agent import build_campaign_plan, generate_segment
 from .config import settings
 from .database import get_db
 from .migrations import run_migrations
-from .schemas import AgentPlanRequest, CampaignCreateRequest, CustomerIn, OrderIn, ReceiptIn, SegmentCreateRequest, SegmentPreviewRequest
+from .schemas import AgentPlanRequest, CampaignCreateRequest, CustomerIn, OrderIn, ReceiptIn, SegmentCreateRequest, SegmentFromPromptRequest, SegmentPreviewRequest
 from .services import (
     apply_receipt,
     campaign_analysis,
@@ -23,7 +23,6 @@ from .services import (
     customer_rows,
     order_rows,
     performance,
-    personalize,
     preview_segment,
     seed_demo_data,
     segment_rows,
@@ -144,6 +143,11 @@ def segment_preview(payload: SegmentPreviewRequest, db: Session = Depends(get_db
     return {"audience": preview_segment(db, payload.rules.model_dump(exclude_none=True))}
 
 
+@app.post("/agent/segment")
+def agent_segment(payload: SegmentFromPromptRequest, db: Session = Depends(get_db)) -> dict:
+    return generate_segment(db, payload.prompt, payload.model)
+
+
 @app.post("/agent/campaign-plan")
 def campaign_plan(payload: AgentPlanRequest, db: Session = Depends(get_db)) -> dict:
     plan = build_campaign_plan(db, payload.goal, payload.model)
@@ -227,64 +231,41 @@ async def send_campaign(campaign_id: str, db: Session = Depends(get_db)) -> dict
     campaign = db.get(models.Campaign, campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="campaign not found")
-    communications = db.scalars(
-        select(models.Communication).where(models.Communication.campaign_id == campaign_id)
-    ).all()
-    if campaign.status == models.CampaignStatus.queued.value and not communications:
-        campaign.status = models.CampaignStatus.approved.value
-        db.flush()
-    if campaign.status != models.CampaignStatus.approved.value:
+    sendable = {
+        models.CampaignStatus.approved.value,
+        models.CampaignStatus.queued.value,
+        models.CampaignStatus.sending.value,
+    }
+    if campaign.status not in sendable:
         raise HTTPException(status_code=409, detail="campaign requires approval before send")
     audience = preview_segment(db, campaign.segment_rules)
     if not audience:
         raise HTTPException(status_code=409, detail="campaign audience is empty; seed customers or choose a segment with matching customers")
 
-    created = 0
-    for customer_row in audience:
-        communication_id = f"msg_{campaign_id}_{customer_row['id']}"
-        if db.get(models.Communication, communication_id):
-            continue
-        customer = db.get(models.Customer, customer_row["id"])
-        if not customer:
-            continue
-        db.add(models.Communication(
-            id=communication_id,
-            campaign_id=campaign_id,
-            customer_id=customer.id,
-            channel=campaign.channel,
-            recipient={"name": customer.name, "phone": customer.phone, "email": customer.email},
-            message=personalize(campaign.message_template, customer),
-            status=models.CommunicationStatus.queued.value,
-            attributed_revenue=0,
-        ))
-        created += 1
-
-    campaign.status = models.CampaignStatus.sending.value
+    # Mark queued and hand the fan-out to BullMQ via the worker's enqueue API.
+    # The worker creates communications and drives the channel.deliver queue, so
+    # large audiences are processed off the request path with retries/backoff.
+    campaign.status = models.CampaignStatus.queued.value
     campaign.queued_at = utc_now()
     db.commit()
 
-    async with httpx.AsyncClient(timeout=5) as client:
-        for customer_row in audience:
-            communication_id = f"msg_{campaign_id}_{customer_row['id']}"
-            customer = db.get(models.Customer, customer_row["id"])
-            if not customer:
-                continue
-            response = await client.post(f"{settings.worker_url}/send", json={
-                "campaignId": campaign_id,
-                "customerId": customer_row["id"],
-                "communicationId": communication_id,
-                "recipient": {
-                    "name": customer_row["name"],
-                    "phone": customer_row["phone"],
-                    "email": customer_row["email"],
-                },
-                "channel": campaign.channel,
-                "message": personalize(campaign.message_template, customer),
-                "callbackUrl": settings.receipt_callback_url,
-            })
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.post(
+                f"{settings.worker_url}/enqueue/campaign-send",
+                json={"campaign_id": campaign_id},
+            )
             response.raise_for_status()
+            job = response.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"failed to enqueue campaign send: {exc}") from exc
 
-    return {"queued": True, "campaign_id": campaign_id, "audience_size": len(audience), "communications_created": created}
+    return {
+        "queued": True,
+        "campaign_id": campaign_id,
+        "audience_size": len(audience),
+        "job_id": job.get("job_id"),
+    }
 
 
 @app.get("/campaigns/{campaign_id}/performance")
