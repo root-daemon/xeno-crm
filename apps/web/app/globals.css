@@ -108,6 +108,10 @@ h1 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .panel,
 .metric,
 .row {
@@ -171,6 +175,14 @@ textarea {
   resize: vertical;
 }
 
+select {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  padding: 11px;
+  width: 100%;
+}
+
 label {
   color: var(--muted);
   display: grid;
@@ -199,13 +211,87 @@ label {
   padding: 3px 8px;
 }
 
+.table {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.table-row {
+  align-items: center;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1.4fr 1.6fr 0.8fr 0.9fr 0.9fr;
+  padding: 12px 14px;
+}
+
+.table-row:last-child {
+  border-bottom: 0;
+}
+
+.table-row.header {
+  background: #eef3f7;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.toolbar {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.funnel {
+  display: grid;
+  gap: 10px;
+}
+
+.funnel-step {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 120px 1fr 72px;
+}
+
+.funnel-bar {
+  background: #e4ebf2;
+  border-radius: 999px;
+  height: 14px;
+  overflow: hidden;
+}
+
+.funnel-fill {
+  background: var(--accent);
+  height: 100%;
+}
+
+.split-list {
+  display: grid;
+  gap: 10px;
+}
+
+.link-row {
+  display: block;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
   }
 
   .grid.two,
+  .grid.three,
   .grid.four {
+    grid-template-columns: 1fr;
+  }
+
+  .toolbar,
+  .table-row {
     grid-template-columns: 1fr;
   }
 }

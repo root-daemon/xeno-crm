@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { BarChart3, Bot, Send, Users } from "lucide-react";
+import { BarChart3, Bot, Send, SlidersHorizontal, Users } from "lucide-react";
 import Link from "next/link";
 import "./globals.css";
 
@@ -18,6 +18,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             <nav className="nav">
               <Link href="/"><BarChart3 size={18} />Dashboard</Link>
               <Link href="/customers"><Users size={18} />Customers</Link>
+              <Link href="/segments"><SlidersHorizontal size={18} />Segments</Link>
               <Link href="/campaigns"><Send size={18} />Campaigns</Link>
               <Link href="/campaigns/new"><Bot size={18} />AI Agent</Link>
             </nav>

@@ -70,6 +70,11 @@ class SegmentPreviewRequest(BaseModel):
     rules: SegmentRules = Field(default_factory=SegmentRules)
 
 
+class SegmentCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    rules: SegmentRules = Field(default_factory=SegmentRules)
+
+
 class AgentPlanRequest(BaseModel):
     goal: str = Field(min_length=3, max_length=1000)
 

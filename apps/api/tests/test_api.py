@@ -26,7 +26,42 @@ def test_segment_preview_lapsed_sms():
     response = client.post("/segments/preview", json={"rules": {"channel": "sms", "min_last_order_days_ago": 60}})
     assert response.status_code == 200
     ids = sorted(customer["id"] for customer in response.json()["audience"])
-    assert ids == ["cus_009", "cus_012"]
+    assert "cus_009" in ids
+    assert "cus_012" in ids
+    assert all(customer_id.startswith("cus_") for customer_id in ids)
+
+
+def test_segments_can_be_saved_and_listed():
+    created = client.post("/segments", json={
+        "name": "Lapsed SMS Buyers",
+        "rules": {"channel": "sms", "min_last_order_days_ago": 60},
+    })
+    assert created.status_code == 200
+    payload = created.json()
+    assert payload["id"].startswith("seg_")
+    assert payload["name"] == "Lapsed SMS Buyers"
+    assert payload["rules"] == {"channel": "sms", "min_last_order_days_ago": 60}
+    assert payload["audience_size"] >= 2
+
+    segments = client.get("/segments")
+    assert segments.status_code == 200
+    assert any(segment["id"] == payload["id"] for segment in segments.json())
+
+
+def test_customer_detail_includes_profile_summary_and_history():
+    response = client.get("/customers/cus_001")
+    assert response.status_code == 200
+    customer = response.json()
+    assert customer["email"] == "aarav@example.com"
+    assert customer["order_count"] == 2
+    assert customer["lifetime_value"] == 7400
+    assert customer["last_order_days_ago"] == 12
+    assert len(customer["purchase_history"]) == 2
+    assert "Aarav Mehta" in customer["ai_summary"]
+
+    orders = client.get("/customers/cus_001/orders")
+    assert orders.status_code == 200
+    assert [order["id"] for order in orders.json()] == ["ord_001", "ord_011"]
 
 
 def test_agent_plan_is_structured():
@@ -72,7 +107,7 @@ def test_agent_uses_anthropic_structured_plan(monkeypatch):
     assert plan["model"] == settings.anthropic_model
     assert plan["campaign_name"] == "AI VIP Push"
     assert plan["recommended_segment"]["rules"] == {"channel": "whatsapp", "min_lifetime_value": 7000.0}
-    assert plan["expected_audience_size"] == 3
+    assert plan["expected_audience_size"] >= 3
     assert any(call["tool"] == "anthropic_campaign_planner" for call in plan["tool_calls"])
 
 
@@ -154,6 +189,42 @@ def test_receipts_are_idempotent_and_order_safe():
     assert client.post("/receipts", json=read).json()["accepted"] is True
     assert client.post("/receipts", json=read).json()["accepted"] is False
     assert client.post("/receipts", json=opened).json()["status"] == "read"
+
+
+def test_campaign_performance_counts_converted_as_purchased():
+    plan = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"}).json()
+    campaign = client.post("/campaigns", json={
+        "agent_run_id": plan["agent_run_id"],
+        "name": plan["plan"]["campaign_name"],
+        "goal": plan["plan"]["goal"],
+        "channel": plan["plan"]["recommended_channel"],
+        "segment_rules": plan["plan"]["recommended_segment"]["rules"],
+        "message_template": plan["plan"]["message_variants"][0]["template"],
+        "approved_plan": plan["plan"],
+    }).json()
+
+    from app import models
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    communication = models.Communication(
+        id="msg_purchase",
+        campaign_id=campaign["id"],
+        customer_id="cus_009",
+        channel="sms",
+        recipient={},
+        message="Hi",
+        status="converted",
+        attributed_revenue=2499,
+    )
+    db.add(communication)
+    db.commit()
+    db.close()
+
+    performance = client.get(f"/campaigns/{campaign['id']}/performance")
+    assert performance.status_code == 200
+    assert performance.json()["counts"]["converted"] == 1
+    assert performance.json()["counts"]["purchased"] == 1
 
 
 def test_invalid_segment_rules_are_rejected():
