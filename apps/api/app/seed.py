@@ -149,3 +149,160 @@ ORDERS = [
     {"id": "ord_089", "customer_id": "cus_016", "total": 2100, "items": ["churidar set"], "channel": "store", "days_ago": 90},
     {"id": "ord_090", "customer_id": "cus_028", "total": 1800, "items": ["sunglasses"], "channel": "online", "days_ago": 58},
 ]
+
+# ---------------------------------------------------------------------------
+# Campaigns
+# ---------------------------------------------------------------------------
+# statuses: draft | approved | queued | sending | completed
+CAMPAIGNS = [
+    {
+        "id": "cmp_seed_001",
+        "name": "Lapsed Shopper Comeback",
+        "goal": "Win back shoppers who have not purchased in 60+ days with a personalized SMS offer.",
+        "channel": "sms",
+        "segment_rules": {"channel": "sms", "min_last_order_days_ago": 60},
+        "message_template": "Hi {{name}}, we miss you! It's been a while since your last order. Come back with 20% off your next purchase — use code COMEBACK20 today. 🛍️",
+        "status": "completed",
+        "approved_plan": {
+            "campaign_name": "Lapsed Shopper Comeback",
+            "goal": "Win back shoppers who have not purchased in 60+ days with a personalized SMS offer.",
+            "recommended_channel": "sms",
+            "recommended_segment": {"rules": {"channel": "sms", "min_last_order_days_ago": 60}, "reasoning": "Targeting 9 lapsed shoppers via SMS (highest opt-in rate for this segment)."},
+            "message_variants": [{"label": "direct", "template": "Hi {{name}}, we miss you! 20% off with code COMEBACK20."}],
+            "risk_notes": ["Requires marketer approval before send.", "Segment limited to SMS opt-ins only."],
+            "expected_audience_size": 9,
+        },
+        "days_ago_created": 18,
+        "days_ago_approved": 17,
+    },
+    {
+        "id": "cmp_seed_002",
+        "name": "VIP Platinum Early Access",
+        "goal": "Give platinum-tier shoppers early access to the new premium collection via WhatsApp.",
+        "channel": "whatsapp",
+        "segment_rules": {"channel": "whatsapp", "min_lifetime_value": 7000},
+        "message_template": "Hi {{name}}, as one of our platinum members you get exclusive early access to our new collection before anyone else. Tap to shop 👑",
+        "status": "completed",
+        "approved_plan": {
+            "campaign_name": "VIP Platinum Early Access",
+            "goal": "Give platinum-tier shoppers early access to the new premium collection via WhatsApp.",
+            "recommended_channel": "whatsapp",
+            "recommended_segment": {"rules": {"channel": "whatsapp", "min_lifetime_value": 7000}, "reasoning": "High-value customers (LTV ≥ ₹7,000) who are WhatsApp opted-in tend to convert at 3× the average rate."},
+            "message_variants": [{"label": "direct", "template": "Hi {{name}}, exclusive early access just for you 👑"}],
+            "risk_notes": ["Requires marketer approval before send.", "Only opted-in platinum customers included."],
+            "expected_audience_size": 10,
+        },
+        "days_ago_created": 11,
+        "days_ago_approved": 10,
+    },
+    {
+        "id": "cmp_seed_003",
+        "name": "Festive Season Activation",
+        "goal": "Drive festive purchases from shoppers tagged as festive buyers via email.",
+        "channel": "email",
+        "segment_rules": {"channel": "email", "tag": "festive"},
+        "message_template": "Hi {{name}}, your festive edit is here! We've handpicked looks for the season — shop your personalized collection now and celebrate in style. ✨",
+        "status": "completed",
+        "approved_plan": {
+            "campaign_name": "Festive Season Activation",
+            "goal": "Drive festive purchases from shoppers tagged as festive buyers via email.",
+            "recommended_channel": "email",
+            "recommended_segment": {"rules": {"channel": "email", "tag": "festive"}, "reasoning": "Festive-tagged customers showed 2.4× higher open rates in previous seasonal campaigns."},
+            "message_variants": [{"label": "festive", "template": "Hi {{name}}, your festive edit is here! ✨"}],
+            "risk_notes": ["Requires marketer approval before send.", "Email volume may affect deliverability — send in batches."],
+            "expected_audience_size": 12,
+        },
+        "days_ago_created": 6,
+        "days_ago_approved": 5,
+    },
+    {
+        "id": "cmp_seed_004",
+        "name": "Recent Buyer New Arrivals",
+        "goal": "Show recent buyers (last 30 days) the new arrivals drop via WhatsApp.",
+        "channel": "whatsapp",
+        "segment_rules": {"channel": "whatsapp", "max_last_order_days_ago": 30},
+        "message_template": "Hi {{name}}, new arrivals just dropped and we picked some looks we think you'll love based on your last order. Be the first to shop 🔥",
+        "status": "approved",
+        "approved_plan": {},
+        "days_ago_created": 2,
+        "days_ago_approved": 1,
+    },
+    {
+        "id": "cmp_seed_005",
+        "name": "Summer Sale — Delhi Shoppers",
+        "goal": "Drive summer sale conversions from Delhi-based customers via WhatsApp.",
+        "channel": "whatsapp",
+        "segment_rules": {"channel": "whatsapp", "city": "Delhi"},
+        "message_template": "Hi {{name}}, the Summer Sale is live in Delhi! Up to 40% off your favourite brands — tap to explore your personalised sale picks. 🌞",
+        "status": "draft",
+        "approved_plan": {},
+        "days_ago_created": 1,
+        "days_ago_approved": None,
+    },
+]
+
+# ---------------------------------------------------------------------------
+# Communications (messages sent per campaign per customer)
+# status progression per customer: queued → sent → delivered → opened / clicked / converted / failed
+# ---------------------------------------------------------------------------
+
+def _msg(campaign_id, customer_id, channel, name, phone, email, template, status, revenue=0):
+    msg = template.replace("{{name}}", name.split()[0])
+    return {
+        "id": f"msg_{campaign_id}_{customer_id}",
+        "campaign_id": campaign_id,
+        "customer_id": customer_id,
+        "channel": channel,
+        "recipient": {"name": name, "phone": phone, "email": email},
+        "message": msg,
+        "status": status,
+        "attributed_revenue": revenue,
+    }
+
+
+# Campaign 1 — Lapsed Shopper Comeback (SMS, completed)
+# Target: lapsed 60+ days with sms_opt_in
+_C1 = "cmp_seed_001"
+COMMUNICATIONS = [
+    _msg(_C1, "cus_003", "sms", "Kabir Singh",    "+919810000003", "kabir@example.com",  "Hi {{name}}, we miss you! 20% off with code COMEBACK20.", "converted", 1850),
+    _msg(_C1, "cus_009", "sms", "Arjun Batra",    "+919810000009", "arjun@example.com",  "Hi {{name}}, we miss you! 20% off with code COMEBACK20.", "clicked"),
+    _msg(_C1, "cus_012", "sms", "Tara Bose",      "+919810000012", "tara@example.com",   "Hi {{name}}, we miss you! 20% off with code COMEBACK20.", "delivered"),
+    _msg(_C1, "cus_015", "sms", "Ishaan Gupta",   "+919810000015", "ishaan@example.com", "Hi {{name}}, we miss you! 20% off with code COMEBACK20.", "converted", 2100),
+    _msg(_C1, "cus_021", "sms", "Vihaan Joshi",   "+919810000021", "vihaan.j@example.com","Hi {{name}}, we miss you! 20% off with code COMEBACK20.", "clicked"),
+    _msg(_C1, "cus_027", "sms", "Dhruv Bose",     "+919810000027", "dhruv.b@example.com", "Hi {{name}}, we miss you! 20% off with code COMEBACK20.", "delivered"),
+    _msg(_C1, "cus_035", "sms", "Shaan Malhotra", "+919810000035", "shaan.m@example.com", "Hi {{name}}, we miss you! 20% off with code COMEBACK20.", "failed"),
+    _msg(_C1, "cus_039", "sms", "Dev Iyer",       "+919810000039", "dev.i@example.com",   "Hi {{name}}, we miss you! 20% off with code COMEBACK20.", "delivered"),
+    _msg(_C1, "cus_048", "sms", "Nikhil Verma",   "+919810000048", "nikhil.v@example.com","Hi {{name}}, we miss you! 20% off with code COMEBACK20.", "sent"),
+]
+
+# Campaign 2 — VIP Platinum Early Access (WhatsApp, completed)
+_C2 = "cmp_seed_002"
+COMMUNICATIONS += [
+    _msg(_C2, "cus_002", "whatsapp", "Anaya Rao",       "+919810000002", "anaya@example.com",     "Hi {{name}}, exclusive early access just for you 👑", "converted", 7800),
+    _msg(_C2, "cus_008", "whatsapp", "Diya Menon",      "+919810000008", "diya@example.com",      "Hi {{name}}, exclusive early access just for you 👑", "converted", 4100),
+    _msg(_C2, "cus_013", "whatsapp", "Priya Sharma",    "+919810000013", "priya.sharma@example.com","Hi {{name}}, exclusive early access just for you 👑", "clicked"),
+    _msg(_C2, "cus_018", "whatsapp", "Kavya Reddy",     "+919810000018", "kavya.r@example.com",   "Hi {{name}}, exclusive early access just for you 👑", "clicked"),
+    _msg(_C2, "cus_023", "whatsapp", "Aryan Mehta",     "+919810000023", "aryan.m@example.com",   "Hi {{name}}, exclusive early access just for you 👑", "converted", 11200),
+    _msg(_C2, "cus_026", "whatsapp", "Meera Kapoor",    "+919810000026", "meera.k@example.com",   "Hi {{name}}, exclusive early access just for you 👑", "converted", 12400),
+    _msg(_C2, "cus_033", "whatsapp", "Rishi Verma",     "+919810000033", "rishi.v@example.com",   "Hi {{name}}, exclusive early access just for you 👑", "clicked"),
+    _msg(_C2, "cus_038", "whatsapp", "Prachi Mehta",    "+919810000038", "prachi.m@example.com",  "Hi {{name}}, exclusive early access just for you 👑", "converted", 13500),
+    _msg(_C2, "cus_044", "whatsapp", "Sana Gupta",      "+919810000044", "sana.g@example.com",    "Hi {{name}}, exclusive early access just for you 👑", "clicked"),
+    _msg(_C2, "cus_050", "whatsapp", "Ayaan Malhotra",  "+919810000050", "ayaan.m@example.com",   "Hi {{name}}, exclusive early access just for you 👑", "converted", 14200),
+]
+
+# Campaign 3 — Festive Season Activation (email, completed)
+_C3 = "cmp_seed_003"
+COMMUNICATIONS += [
+    _msg(_C3, "cus_007", "email", "Reyansh Shah",  "+919810000007", "reyansh@example.com",   "Hi {{name}}, your festive edit is here! ✨", "converted", 5100),
+    _msg(_C3, "cus_010", "email", "Saanvi Gill",   "+919810000010", "saanvi@example.com",    "Hi {{name}}, your festive edit is here! ✨", "clicked"),
+    _msg(_C3, "cus_013", "email", "Priya Sharma",  "+919810000013", "priya.sharma@example.com","Hi {{name}}, your festive edit is here! ✨", "clicked"),
+    _msg(_C3, "cus_016", "email", "Nisha Patel",   "+919810000016", "nisha.p@example.com",   "Hi {{name}}, your festive edit is here! ✨", "converted", 4500),
+    _msg(_C3, "cus_019", "email", "Siddharth Malhotra", "+919810000019", "sid.m@example.com", "Hi {{name}}, your festive edit is here! ✨", "delivered"),
+    _msg(_C3, "cus_022", "email", "Riya Singh",    "+919810000022", "riya.s@example.com",    "Hi {{name}}, your festive edit is here! ✨", "converted", 5600),
+    _msg(_C3, "cus_025", "email", "Karan Shah",    "+919810000025", "karan.s@example.com",   "Hi {{name}}, your festive edit is here! ✨", "clicked"),
+    _msg(_C3, "cus_037", "email", "Aarav Joshi",   "+919810000037", "aarav.j@example.com",   "Hi {{name}}, your festive edit is here! ✨", "converted", 9100),
+    _msg(_C3, "cus_040", "email", "Tia Shah",      "+919810000040", "tia.s@example.com",     "Hi {{name}}, your festive edit is here! ✨", "delivered"),
+    _msg(_C3, "cus_042", "email", "Aisha Bose",    "+919810000042", "aisha.b@example.com",   "Hi {{name}}, your festive edit is here! ✨", "clicked"),
+    _msg(_C3, "cus_047", "email", "Arya Sharma",   "+919810000047", "arya.s@example.com",    "Hi {{name}}, your festive edit is here! ✨", "converted", 6900),
+    _msg(_C3, "cus_002", "email", "Anaya Rao",     "+919810000002", "anaya@example.com",     "Hi {{name}}, your festive edit is here! ✨", "delivered"),
+]

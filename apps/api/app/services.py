@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import models
-from .seed import CUSTOMERS, ORDERS
+from .seed import CAMPAIGNS, COMMUNICATIONS, CUSTOMERS, ORDERS
 from .time import utc_now
 
 STATUS_RANK = {
@@ -22,6 +22,8 @@ STATUS_RANK = {
 
 
 def seed_demo_data(db: Session) -> dict[str, int]:
+    from datetime import timedelta, timezone
+
     for item in CUSTOMERS:
         if not db.get(models.Customer, item["id"]):
             db.add(models.Customer(**item))
@@ -29,7 +31,45 @@ def seed_demo_data(db: Session) -> dict[str, int]:
         if not db.get(models.Order, item["id"]):
             db.add(models.Order(**item))
     db.commit()
-    return {"customers": len(CUSTOMERS), "orders": len(ORDERS)}
+
+    for item in CAMPAIGNS:
+        if db.get(models.Campaign, item["id"]):
+            continue
+        now = utc_now()
+        created = now - timedelta(days=item["days_ago_created"])
+        approved = (now - timedelta(days=item["days_ago_approved"])) if item["days_ago_approved"] else None
+        campaign = models.Campaign(
+            id=item["id"],
+            name=item["name"],
+            goal=item["goal"],
+            channel=item["channel"],
+            segment_rules=item["segment_rules"],
+            message_template=item["message_template"],
+            approved_plan=item["approved_plan"],
+            status=item["status"],
+            created_at=created,
+            approved_at=approved,
+            queued_at=approved,
+        )
+        db.add(campaign)
+    db.commit()
+
+    for item in COMMUNICATIONS:
+        if db.get(models.Communication, item["id"]):
+            continue
+        db.add(models.Communication(
+            id=item["id"],
+            campaign_id=item["campaign_id"],
+            customer_id=item["customer_id"],
+            channel=item["channel"],
+            recipient=item["recipient"],
+            message=item["message"],
+            status=item["status"],
+            attributed_revenue=item["attributed_revenue"],
+        ))
+    db.commit()
+
+    return {"customers": len(CUSTOMERS), "orders": len(ORDERS), "campaigns": len(CAMPAIGNS), "communications": len(COMMUNICATIONS)}
 
 
 def customer_rows(db: Session) -> list[dict[str, Any]]:

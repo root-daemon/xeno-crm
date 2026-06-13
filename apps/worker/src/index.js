@@ -1,3 +1,18 @@
+import { readFileSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
+
+// Load .env from the worker package root (dev convenience — no effect in prod)
+try {
+  const envPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".env");
+  for (const line of readFileSync(envPath, "utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const [key, ...rest] = trimmed.split("=");
+    if (key && !(key in process.env)) process.env[key] = rest.join("=");
+  }
+} catch { /* .env is optional */ }
+
 import express from "express";
 import { Worker } from "bullmq";
 import { campaignQueue, channelQueue, connection } from "./queues.js";
