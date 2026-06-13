@@ -8,10 +8,10 @@
     "apps/worker"
   ],
   "scripts": {
-    "dev:web": "npm --workspace apps/web run dev",
-    "dev:worker": "npm --workspace apps/worker run dev",
-    "test": "npm --workspace apps/worker test && python3 -m pytest apps/api/tests",
-    "lint": "npm --workspace apps/web run lint",
+    "dev:web": "bun --cwd apps/web run dev",
+    "dev:worker": "bun --cwd apps/worker run dev",
+    "test": "bun --cwd apps/worker test && python3 -m pytest apps/api/tests",
+    "lint": "bun --cwd apps/web run lint",
     "compose:up": "docker compose -f infra/docker-compose.yml up --build",
     "compose:down": "docker compose -f infra/docker-compose.yml down -v"
   },

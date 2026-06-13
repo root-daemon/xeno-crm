@@ -58,6 +58,56 @@ def customer_rows(db: Session) -> list[dict[str, Any]]:
     return rows
 
 
+def customer_detail(db: Session, customer_id: str) -> dict[str, Any] | None:
+    rows = customer_rows(db)
+    customer = next((row for row in rows if row["id"] == customer_id), None)
+    if not customer:
+        return None
+
+    orders = order_rows(db, customer_id)
+    summary_text = ai_customer_summary(customer, orders)
+    return {
+        **customer,
+        "purchase_history": orders,
+        "ai_summary": summary_text,
+    }
+
+
+def order_rows(db: Session, customer_id: str) -> list[dict[str, Any]]:
+    orders = db.scalars(
+        select(models.Order)
+        .where(models.Order.customer_id == customer_id)
+        .order_by(models.Order.days_ago.asc())
+    ).all()
+    return [
+        {
+            "id": order.id,
+            "customer_id": order.customer_id,
+            "total": order.total,
+            "items": order.items,
+            "channel": order.channel,
+            "days_ago": order.days_ago,
+            "created_at": order.created_at.isoformat() if order.created_at else None,
+        }
+        for order in orders
+    ]
+
+
+def ai_customer_summary(customer: dict[str, Any], orders: list[dict[str, Any]]) -> str:
+    if not orders:
+        return f"{customer['name']} has not purchased yet; start with a lightweight welcome campaign."
+
+    cadence = "frequent" if customer["order_count"] >= 3 else "selective"
+    value = "high-value" if customer["lifetime_value"] >= 7000 else "emerging"
+    last_order = customer["last_order_days_ago"]
+    inactivity = "recently active" if last_order is not None and last_order <= 30 else f"inactive for {last_order} days"
+    top_tags = ", ".join(customer["tags"][:2]) if customer["tags"] else "general retail"
+    return (
+        f"{customer['name']} is a {value}, {cadence} {top_tags} shopper from {customer['city']} "
+        f"who is {inactivity}. Best next step: a personalized {customer['loyalty_tier']} tier offer."
+    )
+
+
 def preview_segment(db: Session, rules: dict[str, Any]) -> list[dict[str, Any]]:
     rows = customer_rows(db)
     channel = rules.get("channel")
@@ -81,6 +131,22 @@ def preview_segment(db: Session, rules: dict[str, Any]) -> list[dict[str, Any]]:
     return matched
 
 
+def segment_to_dict(db: Session, segment: models.Segment) -> dict[str, Any]:
+    rules = segment.rules or {}
+    return {
+        "id": segment.id,
+        "name": segment.name,
+        "rules": rules,
+        "audience_size": len(preview_segment(db, rules)),
+        "created_at": segment.created_at.isoformat() if segment.created_at else None,
+    }
+
+
+def segment_rows(db: Session) -> list[dict[str, Any]]:
+    segments = db.scalars(select(models.Segment).order_by(models.Segment.created_at.desc())).all()
+    return [segment_to_dict(db, segment) for segment in segments]
+
+
 def personalize(template: str, customer: models.Customer) -> str:
     return (
         template.replace("{{name}}", customer.name.split(" ")[0])
@@ -99,6 +165,7 @@ def performance(db: Session, campaign_id: str) -> dict[str, Any]:
         for status in counts:
             if status in statuses:
                 counts[status] += 1
+    counts["purchased"] = counts["converted"]
     return {
         "campaign": campaign_to_dict(campaign) if campaign else None,
         "audience_size": len(communications) if communications else len(preview_segment(db, campaign.segment_rules)) if campaign else 0,
@@ -106,6 +173,40 @@ def performance(db: Session, campaign_id: str) -> dict[str, Any]:
         "revenue": sum(message.attributed_revenue for message in communications),
         "communications": [communication_to_dict(message) for message in communications],
     }
+
+
+def campaign_insights(db: Session, campaign_id: str) -> dict[str, Any]:
+    campaign = db.get(models.Campaign, campaign_id)
+    if not campaign:
+        return {"insights": []}
+
+    perf = performance(db, campaign_id)
+    audience = preview_segment(db, campaign.segment_rules)
+    counts = perf["counts"]
+    sent = counts.get("sent", 0) or len(perf["communications"]) or len(audience)
+    clicked = counts.get("clicked", 0)
+    purchased = counts.get("purchased", 0)
+
+    insights = []
+    if sent:
+        click_rate = clicked / sent
+        purchase_rate = purchased / sent
+        insights.append(f"{campaign.channel.upper()} click-through is {click_rate:.0%} with {clicked} clicked shoppers out of {sent} sent.")
+        insights.append(f"Purchased conversion is {purchase_rate:.0%}; {purchased} shoppers generated attributed revenue of INR {perf['revenue']:,.0f}.")
+
+    city_counts = count_by(audience, "city") if audience else {}
+    if city_counts:
+        top_city, top_count = max(city_counts.items(), key=lambda item: item[1])
+        insights.append(f"{top_city} is the largest reachable city in this audience with {top_count} shoppers.")
+
+    inactive_30_45 = sum(1 for row in audience if row["last_order_days_ago"] is not None and 30 <= row["last_order_days_ago"] <= 45)
+    inactive_90_plus = sum(1 for row in audience if row["last_order_days_ago"] is not None and row["last_order_days_ago"] >= 90)
+    if inactive_30_45 or inactive_90_plus:
+        insights.append(f"Inactivity split: {inactive_30_45} shoppers are 30-45 days inactive and {inactive_90_plus} are 90+ days inactive.")
+
+    if not insights:
+        insights.append("Launch or send this campaign to generate channel and purchase insights.")
+    return {"insights": insights}
 
 
 def apply_receipt(db: Session, receipt: dict[str, Any]) -> dict[str, Any]:
@@ -155,13 +256,31 @@ def reconcile_campaign_status(db: Session, campaign_id: str) -> None:
 
 def summary(db: Session) -> dict[str, Any]:
     customers = customer_rows(db)
+    inactive_customers = [row for row in customers if (row["last_order_days_ago"] or 0) >= 60]
+    active_segments = db.scalar(select(func.count(models.Segment.id))) or 0
+    campaigns_sent = db.scalar(
+        select(func.count(models.Campaign.id)).where(models.Campaign.status.in_([
+            models.CampaignStatus.queued.value,
+            models.CampaignStatus.sending.value,
+            models.CampaignStatus.completed.value,
+        ]))
+    ) or 0
+    recovery_revenue = sum(row["lifetime_value"] for row in inactive_customers) * 0.15
     return {
         "totals": {
             "customers": len(customers),
             "orders": db.scalar(select(func.count(models.Order.id))) or 0,
             "campaigns": db.scalar(select(func.count(models.Campaign.id))) or 0,
+            "active_segments": active_segments,
+            "campaigns_sent": campaigns_sent,
             "communications": db.scalar(select(func.count(models.Communication.id))) or 0,
             "revenue": sum(row["lifetime_value"] for row in customers),
+            "revenue_generated": sum(row["lifetime_value"] for row in customers),
+        },
+        "recommendations": {
+            "inactive_customers": len(inactive_customers),
+            "potential_recovery_revenue": recovery_revenue,
+            "default_goal": "Create a campaign to bring back shoppers who have not purchased in 60 days",
         },
         "recent_campaigns": [campaign_to_dict(campaign) for campaign in db.scalars(select(models.Campaign).order_by(models.Campaign.created_at.desc()).limit(5)).all()],
     }
