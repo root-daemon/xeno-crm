@@ -3,6 +3,7 @@ import { api, Summary } from "../lib/api";
 import { SeedButton } from "./seed-button";
 
 const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
+const defaultGoal = "Create a campaign to bring back shoppers who have not purchased in 60 days";
 
 export default async function DashboardPage() {
   let summary: Summary;
@@ -23,11 +24,12 @@ export default async function DashboardPage() {
       recommendations: {
         inactive_customers: 0,
         potential_recovery_revenue: 0,
-        default_goal: "Create a campaign to bring back shoppers who have not purchased in 60 days",
+        default_goal: defaultGoal,
       },
       recent_campaigns: [],
     };
   }
+  summary = normalizeSummary(summary);
 
   return (
     <>
@@ -75,4 +77,25 @@ export default async function DashboardPage() {
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function normalizeSummary(summary: Summary): Summary {
+  return {
+    totals: {
+      customers: summary.totals?.customers ?? 0,
+      orders: summary.totals?.orders ?? 0,
+      campaigns: summary.totals?.campaigns ?? 0,
+      active_segments: summary.totals?.active_segments ?? 0,
+      campaigns_sent: summary.totals?.campaigns_sent ?? summary.totals?.campaigns ?? 0,
+      communications: summary.totals?.communications ?? 0,
+      revenue: summary.totals?.revenue ?? 0,
+      revenue_generated: summary.totals?.revenue_generated ?? summary.totals?.revenue ?? 0,
+    },
+    recommendations: {
+      inactive_customers: summary.recommendations?.inactive_customers ?? 0,
+      potential_recovery_revenue: summary.recommendations?.potential_recovery_revenue ?? 0,
+      default_goal: summary.recommendations?.default_goal ?? defaultGoal,
+    },
+    recent_campaigns: summary.recent_campaigns ?? [],
+  };
 }
