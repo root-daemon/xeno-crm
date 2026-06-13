@@ -80,6 +80,11 @@ class AgentPlanRequest(BaseModel):
     model: Optional[str] = Field(default=None, max_length=160)
 
 
+class SegmentFromPromptRequest(BaseModel):
+    prompt: str = Field(min_length=3, max_length=1000)
+    model: Optional[str] = Field(default=None, max_length=160)
+
+
 class CampaignCreateRequest(BaseModel):
     agent_run_id: Optional[str] = None
     name: str = Field(min_length=1, max_length=180)

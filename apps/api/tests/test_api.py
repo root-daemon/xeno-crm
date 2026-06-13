@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from types import SimpleNamespace
@@ -86,9 +87,33 @@ def test_agent_plan_is_structured():
     assert payload["plan"]["recommended_channel"] == "sms"
 
 
-def test_agent_uses_openrouter_structured_plan(monkeypatch):
+class _FakeToolCall:
+    def __init__(self, name, arguments, call_id="call_1"):
+        self.id = call_id
+        self.type = "function"
+        self.function = SimpleNamespace(name=name, arguments=arguments)
+
+
+def _submit_plan_response(plan: dict):
+    """A model turn that immediately commits the plan via the submit tool."""
+    message = SimpleNamespace(content=None, tool_calls=[_FakeToolCall("submit_campaign_plan", json.dumps(plan))])
+    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+def test_agent_uses_openrouter_tool_plan(monkeypatch):
     from app import agent
     from app.config import settings
+
+    plan = {
+        "campaign_name": "AI VIP Push",
+        "recommended_channel": "whatsapp",
+        "recommended_segment": {
+            "rules": {"channel": "whatsapp", "min_lifetime_value": 7000},
+            "reasoning": "Prioritize high-value opted-in shoppers.",
+        },
+        "message_variants": [{"label": "vip", "template": "Hi {{name}}, your private edit is ready."}],
+        "risk_notes": ["Requires marketer approval before send."],
+    }
 
     class FakeOpenAI:
         def __init__(self, api_key, base_url):
@@ -98,30 +123,67 @@ def test_agent_uses_openrouter_structured_plan(monkeypatch):
 
         def create(self, **kwargs):
             assert kwargs["model"] == settings.openrouter_model
-            assert kwargs["response_format"] == {"type": "json_object"}
-            content = """{
-                "campaign_name": "AI VIP Push",
-                "recommended_segment": {
-                    "rules": {"channel": "whatsapp", "min_lifetime_value": 7000},
-                    "reasoning": "Prioritize high-value opted-in shoppers."
-                },
-                "recommended_channel": "whatsapp",
-                "message_variants": [{"label": "vip", "template": "Hi {{name}}, your private edit is ready."}],
-                "risk_notes": ["Requires marketer approval before send."]
-            }"""
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+            assert kwargs["tools"], "agent must expose tools for the model to call"
+            return _submit_plan_response(plan)
 
     monkeypatch.setattr(settings, "openrouter_api_key", "test-openrouter-key")
     monkeypatch.setattr(agent, "OpenAI", FakeOpenAI)
 
     response = client.post("/agent/campaign-plan", json={"goal": "Reach premium VIP customers"})
     assert response.status_code == 200
-    plan = response.json()["plan"]
-    assert plan["model"] == settings.openrouter_model
-    assert plan["campaign_name"] == "AI VIP Push"
-    assert plan["recommended_segment"]["rules"] == {"channel": "whatsapp", "min_lifetime_value": 7000.0}
-    assert plan["expected_audience_size"] >= 3
-    assert any(call["tool"] == "openrouter_campaign_planner" for call in plan["tool_calls"])
+    payload = response.json()["plan"]
+    assert payload["model"] == settings.openrouter_model
+    assert payload["campaign_name"] == "AI VIP Push"
+    assert payload["recommended_segment"]["rules"] == {"channel": "whatsapp", "min_lifetime_value": 7000.0}
+    assert payload["expected_audience_size"] >= 3
+    # The persisted trace is the model's real tool call, not a synthesized one.
+    assert any(call["tool"] == "submit_campaign_plan" for call in payload["tool_calls"])
+
+
+def test_agent_explores_with_tools_before_submitting(monkeypatch):
+    """The model can call read-only tools across turns, then submit."""
+    from app import agent
+    from app.config import settings
+
+    plan = {
+        "campaign_name": "Lapsed SMS Comeback",
+        "recommended_channel": "sms",
+        "recommended_segment": {
+            "rules": {"channel": "sms", "min_last_order_days_ago": 60},
+            "reasoning": "Target lapsed shoppers reachable on SMS.",
+        },
+        "message_variants": [{"label": "direct", "template": "Hi {{name}}, here is 20% off."}],
+        "risk_notes": ["Requires marketer approval before send."],
+    }
+    turns = [
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+            content=None,
+            tool_calls=[_FakeToolCall("preview_segment", json.dumps({"rules": {"channel": "sms", "min_last_order_days_ago": 60}})),
+                        _FakeToolCall("get_customer_summary", "{}", call_id="call_2")],
+        ))]),
+        _submit_plan_response(plan),
+    ]
+
+    class FakeOpenAI:
+        def __init__(self, api_key, base_url):
+            self.chat = SimpleNamespace(completions=self)
+            self._calls = 0
+
+        def create(self, **kwargs):
+            turn = turns[self._calls]
+            self._calls += 1
+            return turn
+
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-openrouter-key")
+    monkeypatch.setattr(agent, "OpenAI", FakeOpenAI)
+
+    response = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"})
+    assert response.status_code == 200
+    payload = response.json()["plan"]
+    tools_called = [call["tool"] for call in payload["tool_calls"]]
+    assert tools_called == ["preview_segment", "get_customer_summary", "submit_campaign_plan"]
+    assert payload["tool_calls"][0]["result"]["audience_size"] >= 1
+    assert payload["agent_steps"] == 2
 
 
 def test_agent_accepts_allowed_model_selection(monkeypatch):
@@ -130,23 +192,24 @@ def test_agent_accepts_allowed_model_selection(monkeypatch):
 
     selected_model = "anthropic/claude-3.5-haiku"
 
+    plan = {
+        "campaign_name": "Selected Model Push",
+        "recommended_channel": "whatsapp",
+        "recommended_segment": {
+            "rules": {"channel": "whatsapp", "min_lifetime_value": 7000},
+            "reasoning": "Prioritize high-value opted-in shoppers.",
+        },
+        "message_variants": [{"label": "vip", "template": "Hi {{name}}, your edit is ready."}],
+        "risk_notes": ["Requires marketer approval before send."],
+    }
+
     class FakeOpenAI:
         def __init__(self, api_key, base_url):
             self.chat = SimpleNamespace(completions=self)
 
         def create(self, **kwargs):
             assert kwargs["model"] == selected_model
-            content = """{
-                "campaign_name": "Selected Model Push",
-                "recommended_segment": {
-                    "rules": {"channel": "whatsapp", "min_lifetime_value": 7000},
-                    "reasoning": "Prioritize high-value opted-in shoppers."
-                },
-                "recommended_channel": "whatsapp",
-                "message_variants": [{"label": "vip", "template": "Hi {{name}}, your edit is ready."}],
-                "risk_notes": ["Requires marketer approval before send."]
-            }"""
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+            return _submit_plan_response(plan)
 
     monkeypatch.setattr(settings, "openrouter_api_key", "test-openrouter-key")
     monkeypatch.setattr(agent, "OpenAI", FakeOpenAI)
@@ -187,14 +250,17 @@ def test_campaign_requires_approval_before_send():
     assert response.status_code == 409
 
 
-def test_send_creates_communications_and_calls_fake_channel(monkeypatch):
+def test_send_delegates_fanout_to_worker_queue(monkeypatch):
     from app import main
 
-    sent_payloads = []
+    enqueue_calls = []
 
     class FakeResponse:
         def raise_for_status(self):
             return None
+
+        def json(self):
+            return {"queued": True, "job_id": "campaign.send.demo"}
 
     class FakeAsyncClient:
         def __init__(self, timeout):
@@ -207,7 +273,7 @@ def test_send_creates_communications_and_calls_fake_channel(monkeypatch):
             return False
 
         async def post(self, url, json):
-            sent_payloads.append({"url": url, "json": json})
+            enqueue_calls.append({"url": url, "json": json})
             return FakeResponse()
 
     monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
@@ -226,14 +292,94 @@ def test_send_creates_communications_and_calls_fake_channel(monkeypatch):
 
     response = client.post(f"/campaigns/{campaign['id']}/send")
     assert response.status_code == 200
-    assert response.json()["communications_created"] > 0
-    assert sent_payloads
-    assert all(call["url"].endswith("/send") for call in sent_payloads)
-    assert all(call["json"]["callbackUrl"].endswith("/receipts") for call in sent_payloads)
+    body = response.json()
+    assert body["queued"] is True
+    assert body["audience_size"] > 0
+    assert body["job_id"] == "campaign.send.demo"
 
-    performance = client.get(f"/campaigns/{campaign['id']}/performance").json()
-    assert performance["audience_size"] == len(sent_payloads)
-    assert performance["counts"]["queued"] == len(sent_payloads)
+    # The API delegates fan-out to BullMQ via a single worker enqueue call.
+    assert len(enqueue_calls) == 1
+    assert enqueue_calls[0]["url"].endswith("/enqueue/campaign-send")
+    assert enqueue_calls[0]["json"] == {"campaign_id": campaign["id"]}
+
+    # Campaign is marked queued; the worker creates communications off the request path.
+    assert client.get(f"/campaigns/{campaign['id']}").json()["status"] == "queued"
+
+
+def test_send_requires_worker_and_reports_failure(monkeypatch):
+    from app import main
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json):
+            raise main.httpx.ConnectError("worker unreachable")
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
+
+    plan = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"}).json()
+    campaign = client.post("/campaigns", json={
+        "agent_run_id": plan["agent_run_id"],
+        "name": plan["plan"]["campaign_name"],
+        "goal": plan["plan"]["goal"],
+        "channel": plan["plan"]["recommended_channel"],
+        "segment_rules": plan["plan"]["recommended_segment"]["rules"],
+        "message_template": plan["plan"]["message_variants"][0]["template"],
+        "approved_plan": plan["plan"],
+    }).json()
+    client.post(f"/campaigns/{campaign['id']}/approve")
+
+    response = client.post(f"/campaigns/{campaign['id']}/send")
+    assert response.status_code == 502
+    assert "enqueue" in response.json()["detail"]
+
+
+def test_ai_segment_endpoint_returns_validated_rules(monkeypatch):
+    from app import agent
+    from app.config import settings
+
+    class FakeOpenAI:
+        def __init__(self, api_key, base_url):
+            self.chat = SimpleNamespace(completions=self)
+
+        def create(self, **kwargs):
+            assert kwargs["response_format"] == {"type": "json_object"}
+            content = json.dumps({
+                "rules": {"channel": "sms", "min_last_order_days_ago": 60, "bogus": "drop-me"},
+                "reasoning": "Lapsed SMS-reachable shoppers.",
+            })
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-openrouter-key")
+    monkeypatch.setattr(agent, "OpenAI", FakeOpenAI)
+
+    response = client.post("/agent/segment", json={"prompt": "shoppers who lapsed after 60 days on sms"})
+    assert response.status_code == 200
+    payload = response.json()
+    # Unknown keys are sanitized away; the audience is recomputed server-side.
+    assert payload["rules"] == {"channel": "sms", "min_last_order_days_ago": 60}
+    assert payload["audience_size"] >= 1
+    assert payload["model"] == settings.openrouter_model
+    assert payload["reasoning"]
+
+
+def test_ai_segment_endpoint_falls_back_without_key(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "openrouter_api_key", None)
+
+    response = client.post("/agent/segment", json={"prompt": "loyal customers who stopped buying recently"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["model"] == "local-deterministic-fallback"
+    assert payload["rules"]
 
 
 def test_receipts_are_idempotent_and_order_safe():

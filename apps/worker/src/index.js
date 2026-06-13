@@ -48,13 +48,26 @@ async function sendHandler(request, response) {
   }
 
   const providerMessageId = communicationId;
-  scheduleChannelCallbacks({
-    providerMessageId,
-    communicationId,
-    campaignId,
-    customerId,
-    callbackUrl
-  });
+  // Hand delivery simulation to the BullMQ channel.deliver queue so the whole
+  // send pipeline is queue-backed (survives restarts, retried on failure)
+  // instead of relying on in-process setTimeout timers.
+  await channelQueue.add(
+    "channel.deliver",
+    {
+      communication_id: communicationId,
+      provider_message_id: providerMessageId,
+      campaign_id: campaignId,
+      customer_id: customerId,
+      callback_url: callbackUrl
+    },
+    {
+      jobId: `channel.deliver.${communicationId}`,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 500 },
+      removeOnComplete: true,
+      removeOnFail: false
+    }
+  );
 
   response.status(202).json({ providerMessageId, status: "accepted" });
 }
@@ -123,7 +136,7 @@ new Worker("channel.deliver", async (job) => {
     });
     if (!response.ok) throw new Error(`Receipt failed ${response.status}`);
   }
-}, { connection });
+}, { connection, concurrency: 10 });
 
 app.listen(port, () => {
   console.log(`Worker enqueue API listening on ${port}`);
@@ -134,6 +147,7 @@ function audienceSql(rules) {
           from customers c
           left join orders o on o.customer_id = c.id
           where ($1::text is null or c.city = $1::text)
+            and ($7::text is null or c.loyalty_tier = $7::text)
             and (
               $6::text is null
               or ($6::text = 'whatsapp' and c.whatsapp_opt_in = true)
@@ -155,7 +169,8 @@ function audienceParams(rules) {
     rules.min_last_order_days_ago ?? null,
     rules.max_last_order_days_ago ?? null,
     rules.tag ?? null,
-    rules.channel ?? null
+    rules.channel ?? null,
+    rules.loyalty_tier ?? null
   ];
 }
 
@@ -168,39 +183,4 @@ function personalize(template, customer) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function scheduleChannelCallbacks({ providerMessageId, communicationId, campaignId, customerId, callbackUrl }) {
-  let elapsed = 0;
-  const plan = statusPlan({ id: communicationId, customer_id: customerId });
-  for (const item of plan) {
-    elapsed += item.delay;
-    setTimeout(async () => {
-      const occurredAt = new Date().toISOString();
-      const receipt = {
-        event_id: `${communicationId}_${item.status}`,
-        communication_id: communicationId,
-        providerMessageId,
-        campaign_id: campaignId,
-        customer_id: customerId,
-        status: item.status,
-        occurred_at: occurredAt,
-        timestamp: occurredAt,
-        metadata: item.metadata ?? {}
-      };
-
-      try {
-        const callbackResponse = await fetch(callbackUrl, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(receipt)
-        });
-        if (!callbackResponse.ok) {
-          console.error(`Receipt callback failed ${callbackResponse.status}`, receipt);
-        }
-      } catch (error) {
-        console.error("Receipt callback failed", error);
-      }
-    }, elapsed);
-  }
 }
