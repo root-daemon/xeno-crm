@@ -13,8 +13,21 @@ from .agent import build_campaign_plan
 from .config import settings
 from .database import get_db
 from .migrations import run_migrations
-from .schemas import AgentPlanRequest, CampaignCreateRequest, CustomerIn, OrderIn, ReceiptIn, SegmentPreviewRequest
-from .services import apply_receipt, campaign_to_dict, customer_rows, performance, preview_segment, seed_demo_data, summary
+from .schemas import AgentPlanRequest, CampaignCreateRequest, CustomerIn, OrderIn, ReceiptIn, SegmentCreateRequest, SegmentPreviewRequest
+from .services import (
+    apply_receipt,
+    campaign_insights,
+    campaign_to_dict,
+    customer_detail,
+    customer_rows,
+    order_rows,
+    performance,
+    preview_segment,
+    seed_demo_data,
+    segment_rows,
+    segment_to_dict,
+    summary,
+)
 from .time import utc_now
 
 
@@ -90,6 +103,38 @@ def ingest_orders(payload: list[OrderIn], db: Session = Depends(get_db)) -> dict
 @app.get("/customers")
 def customers(db: Session = Depends(get_db)) -> list[dict]:
     return customer_rows(db)
+
+
+@app.get("/customers/{customer_id}")
+def customer(customer_id: str, db: Session = Depends(get_db)) -> dict:
+    found = customer_detail(db, customer_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="customer not found")
+    return found
+
+
+@app.get("/customers/{customer_id}/orders")
+def customer_orders(customer_id: str, db: Session = Depends(get_db)) -> list[dict]:
+    if not db.get(models.Customer, customer_id):
+        raise HTTPException(status_code=404, detail="customer not found")
+    return order_rows(db, customer_id)
+
+
+@app.get("/segments")
+def segments(db: Session = Depends(get_db)) -> list[dict]:
+    return segment_rows(db)
+
+
+@app.post("/segments")
+def create_segment(payload: SegmentCreateRequest, db: Session = Depends(get_db)) -> dict:
+    segment = models.Segment(
+        name=payload.name,
+        rules=payload.rules.model_dump(exclude_none=True),
+    )
+    db.add(segment)
+    db.commit()
+    db.refresh(segment)
+    return segment_to_dict(db, segment)
 
 
 @app.post("/segments/preview")
@@ -198,6 +243,13 @@ def campaign_performance(campaign_id: str, db: Session = Depends(get_db)) -> dic
     if not db.get(models.Campaign, campaign_id):
         raise HTTPException(status_code=404, detail="campaign not found")
     return performance(db, campaign_id)
+
+
+@app.get("/campaigns/{campaign_id}/insights")
+def get_campaign_insights(campaign_id: str, db: Session = Depends(get_db)) -> dict:
+    if not db.get(models.Campaign, campaign_id):
+        raise HTTPException(status_code=404, detail="campaign not found")
+    return campaign_insights(db, campaign_id)
 
 
 @app.post("/receipts")

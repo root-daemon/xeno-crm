@@ -17,8 +17,8 @@ type PlanResponse = {
   };
 };
 
-export function AgentCampaignForm() {
-  const [goal, setGoal] = useState("Win back shoppers who have not purchased in 60 days with a personalized WhatsApp or SMS offer.");
+export function AgentCampaignForm({ initialGoal }: { initialGoal?: string }) {
+  const [goal, setGoal] = useState(initialGoal || "Win back shoppers who have not purchased in 60 days with a personalized WhatsApp or SMS offer.");
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("");

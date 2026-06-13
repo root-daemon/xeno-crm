@@ -17,7 +17,21 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export type Summary = {
-  totals: { customers: number; orders: number; campaigns: number; communications: number; revenue: number };
+  totals: {
+    customers: number;
+    orders: number;
+    campaigns: number;
+    active_segments: number;
+    campaigns_sent: number;
+    communications: number;
+    revenue: number;
+    revenue_generated: number;
+  };
+  recommendations: {
+    inactive_customers: number;
+    potential_recovery_revenue: number;
+    default_goal: string;
+  };
   recent_campaigns: Campaign[];
 };
 
@@ -35,9 +49,66 @@ export type Campaign = {
 export type Customer = {
   id: string;
   name: string;
+  phone: string;
+  email: string;
   city: string;
+  gender: string;
   loyalty_tier: string;
   tags: string[];
+  whatsapp_opt_in: boolean;
+  sms_opt_in: boolean;
+  email_opt_in: boolean;
+  rcs_opt_in: boolean;
+  last_active_days_ago: number;
+  order_count: number;
   lifetime_value: number;
   last_order_days_ago: number | null;
+  purchase_history?: Order[];
+  ai_summary?: string;
+};
+
+export type Order = {
+  id: string;
+  customer_id: string;
+  total: number;
+  items: string[];
+  channel: string;
+  days_ago: number;
+  created_at: string | null;
+};
+
+export type SegmentRules = {
+  channel?: string;
+  city?: string;
+  loyalty_tier?: string;
+  min_lifetime_value?: number;
+  min_last_order_days_ago?: number;
+  max_last_order_days_ago?: number;
+  tag?: string;
+};
+
+export type Segment = {
+  id: string;
+  name: string;
+  rules: SegmentRules;
+  audience_size: number;
+  created_at: string | null;
+};
+
+export type Performance = {
+  campaign: Campaign;
+  audience_size: number;
+  counts: Record<string, number>;
+  revenue: number;
+  communications: {
+    id: string;
+    campaign_id: string;
+    customer_id: string;
+    channel: string;
+    recipient: Record<string, unknown>;
+    message: string;
+    status: string;
+    attributed_revenue: number;
+    created_at: string | null;
+  }[];
 };
