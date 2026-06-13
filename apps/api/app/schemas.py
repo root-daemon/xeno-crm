@@ -77,6 +77,7 @@ class SegmentCreateRequest(BaseModel):
 
 class AgentPlanRequest(BaseModel):
     goal: str = Field(min_length=3, max_length=1000)
+    model: Optional[str] = Field(default=None, max_length=160)
 
 
 class CampaignCreateRequest(BaseModel):

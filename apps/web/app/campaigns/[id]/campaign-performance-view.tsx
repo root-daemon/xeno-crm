@@ -1,24 +1,36 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Send } from "lucide-react";
-import { CLIENT_API_BASE, Performance } from "../../../lib/api";
+import { AlertTriangle, BarChart3, Send, Sparkles } from "lucide-react";
+import { CampaignAnalysis, ChartItem, CLIENT_API_BASE, Performance } from "../../../lib/api";
 
 const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
+const percent = new Intl.NumberFormat("en-IN", { style: "percent", maximumFractionDigits: 0 });
 
-export function CampaignPerformanceView({ initialPerformance, initialInsights }: { initialPerformance: Performance; initialInsights: string[] }) {
+export function CampaignPerformanceView({
+  initialPerformance,
+  initialInsights,
+  initialAnalysis,
+}: {
+  initialPerformance: Performance;
+  initialInsights: string[];
+  initialAnalysis: CampaignAnalysis;
+}) {
   const [performance, setPerformance] = useState(initialPerformance);
   const [insights, setInsights] = useState(initialInsights);
+  const [analysis, setAnalysis] = useState(initialAnalysis);
   const [status, setStatus] = useState("");
 
   useEffect(() => {
     const interval = window.setInterval(async () => {
-      const [nextPerformance, nextInsights] = await Promise.all([
+      const [nextPerformance, nextInsights, nextAnalysis] = await Promise.all([
         fetch(`${CLIENT_API_BASE}/campaigns/${initialPerformance.campaign.id}/performance`).then((response) => response.json()),
         fetch(`${CLIENT_API_BASE}/campaigns/${initialPerformance.campaign.id}/insights`).then((response) => response.json()),
+        fetch(`${CLIENT_API_BASE}/campaigns/${initialPerformance.campaign.id}/analysis`).then((response) => response.json()),
       ]);
       setPerformance(nextPerformance);
       setInsights(nextInsights.insights ?? []);
+      setAnalysis(nextAnalysis);
     }, 2000);
 
     return () => window.clearInterval(interval);
@@ -48,7 +60,9 @@ export function CampaignPerformanceView({ initialPerformance, initialInsights }:
       return;
     }
     const nextPerformance = await fetch(`${CLIENT_API_BASE}/campaigns/${performance.campaign.id}/performance`).then((item) => item.json());
+    const nextAnalysis = await fetch(`${CLIENT_API_BASE}/campaigns/${performance.campaign.id}/analysis`).then((item) => item.json());
     setPerformance(nextPerformance);
+    setAnalysis(nextAnalysis);
     setStatus("Campaign is processing. Metrics will update automatically.");
   }
 
@@ -80,25 +94,60 @@ export function CampaignPerformanceView({ initialPerformance, initialInsights }:
       <div className="grid two section-gap">
         <section className="panel">
           <h2>Funnel View</h2>
-          <div className="funnel">
-            {funnel.map((item) => (
-              <div className="funnel-step" key={item.label}>
-                <strong>{item.label}</strong>
-                <div className="funnel-bar">
-                  <div className="funnel-fill" style={{ width: `${Math.max(3, (item.value / max) * 100)}%` }} />
-                </div>
-                <span>{item.value}</span>
-              </div>
+          <BarList items={analysis.charts?.funnel?.length ? analysis.charts.funnel : funnel} max={max} />
+        </section>
+        <section className="panel">
+          <h2>AI Post-Campaign Summary</h2>
+          <div className="analysis-headline">
+            <Sparkles size={18} />
+            <strong>{analysis.summary?.headline ?? "Launch or send this campaign to generate post-campaign analysis."}</strong>
+          </div>
+          <div className="split-list">
+            {(analysis.summary?.findings?.length ? analysis.summary.findings : insights).map((insight) => (
+              <div className="row" key={insight}>{insight}</div>
+            ))}
+          </div>
+        </section>
+      </div>
+      <div className="grid three section-gap">
+        <section className="panel">
+          <h2><AlertTriangle size={17} /> Failure Causes</h2>
+          <BarList items={analysis.charts?.failure_reasons ?? []} empty="No failures recorded." />
+        </section>
+        <section className="panel">
+          <h2><BarChart3 size={17} /> Failure by City</h2>
+          <RateList items={analysis.charts?.failure_by_city ?? []} />
+        </section>
+        <section className="panel">
+          <h2><BarChart3 size={17} /> Failure by Tier</h2>
+          <RateList items={analysis.charts?.failure_by_loyalty_tier ?? []} />
+        </section>
+      </div>
+      <div className="grid two section-gap">
+        <section className="panel">
+          <h2>Agent Next Actions</h2>
+          <div className="split-list">
+            {(analysis.summary?.next_actions ?? []).map((action) => (
+              <div className="row" key={action}>{action}</div>
             ))}
           </div>
         </section>
         <section className="panel">
-          <h2>AI Analytics</h2>
-          <div className="split-list">
-            {insights.map((insight) => (
-              <div className="row" key={insight}>{insight}</div>
-            ))}
-          </div>
+          <h2>Failed Recipient Examples</h2>
+          {analysis.failure_examples?.length ? (
+            <div className="failure-table">
+              {analysis.failure_examples.map((example) => (
+                <div className="failure-row" key={example.communication_id}>
+                  <strong>{example.customer_name}</strong>
+                  <span>{example.city} · {example.loyalty_tier}</span>
+                  <span>{example.label}</span>
+                  <span>{example.retryable ? "Retryable" : "Do not retry"}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">No failed recipients for this campaign.</p>
+          )}
         </section>
       </div>
     </>
@@ -107,4 +156,42 @@ export function CampaignPerformanceView({ initialPerformance, initialInsights }:
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function BarList({ items, max, empty = "No data yet." }: { items: ChartItem[]; max?: number; empty?: string }) {
+  const localMax = max ?? Math.max(...items.map((item) => item.value), 1);
+  if (!items.length) return <p className="muted">{empty}</p>;
+  return (
+    <div className="funnel">
+      {items.map((item) => (
+        <div className="funnel-step" key={item.key ?? item.label}>
+          <strong>{item.label}</strong>
+          <div className="funnel-bar">
+            <div className="funnel-fill" style={{ width: `${item.value ? Math.max(3, (item.value / localMax) * 100) : 0}%` }} />
+          </div>
+          <span>{item.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RateList({ items }: { items: ChartItem[] }) {
+  if (!items.length) return <p className="muted">No segment failures recorded.</p>;
+  return (
+    <div className="rate-list">
+      {items.slice(0, 6).map((item) => (
+        <div className="rate-row" key={item.key ?? item.label}>
+          <div>
+            <strong>{item.label}</strong>
+            <span>{item.value} of {item.total ?? 0} failed</span>
+          </div>
+          <div className="rate-track">
+            <div className="rate-fill" style={{ width: `${Math.max(2, (item.rate ?? 0) * 100)}%` }} />
+          </div>
+          <span>{percent.format(item.rate ?? 0)}</span>
+        </div>
+      ))}
+    </div>
+  );
 }

@@ -3,7 +3,7 @@ export function statusPlan(communication) {
   if (base % 7 === 0) {
     return [
       { status: "accepted", delay: 20 },
-      { status: "failed", delay: 400, metadata: { reason: "simulated_provider_reject" } }
+      { status: "failed", delay: 400, metadata: failureProfile(communication, base) }
     ];
   }
 
@@ -18,6 +18,17 @@ export function statusPlan(communication) {
     ...(clicked ? [{ status: "clicked", delay: 1200, metadata: { url: "https://brand.example/edit" } }] : []),
     ...(converted ? [{ status: "converted", delay: 1600, metadata: { order_value: 2499 } }] : [])
   ];
+}
+
+function failureProfile(communication, base) {
+  const profiles = [
+    { reason: "provider_reject", stage: "provider_acceptance", retryable: true },
+    { reason: "invalid_recipient", stage: "recipient_validation", retryable: false },
+    { reason: "user_opted_out", stage: "consent_check", retryable: false },
+    { reason: "throttled", stage: "provider_queue", retryable: true },
+    { reason: "template_policy", stage: "template_review", retryable: false }
+  ];
+  return profiles[(base + checksum(communication.customer_id)) % profiles.length];
 }
 
 function checksum(value) {

@@ -124,6 +124,40 @@ def test_agent_uses_openrouter_structured_plan(monkeypatch):
     assert any(call["tool"] == "openrouter_campaign_planner" for call in plan["tool_calls"])
 
 
+def test_agent_accepts_allowed_model_selection(monkeypatch):
+    from app import agent
+    from app.config import settings
+
+    selected_model = "anthropic/claude-3.5-haiku"
+
+    class FakeOpenAI:
+        def __init__(self, api_key, base_url):
+            self.chat = SimpleNamespace(completions=self)
+
+        def create(self, **kwargs):
+            assert kwargs["model"] == selected_model
+            content = """{
+                "campaign_name": "Selected Model Push",
+                "recommended_segment": {
+                    "rules": {"channel": "whatsapp", "min_lifetime_value": 7000},
+                    "reasoning": "Prioritize high-value opted-in shoppers."
+                },
+                "recommended_channel": "whatsapp",
+                "message_variants": [{"label": "vip", "template": "Hi {{name}}, your edit is ready."}],
+                "risk_notes": ["Requires marketer approval before send."]
+            }"""
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-openrouter-key")
+    monkeypatch.setattr(agent, "OpenAI", FakeOpenAI)
+
+    response = client.post("/agent/campaign-plan", json={"goal": "Reach premium VIP customers", "model": selected_model})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["plan"]["model"] == selected_model
+    assert payload["agent_run_id"]
+
+
 def test_agent_falls_back_when_no_key(monkeypatch):
     from app.config import settings
 
@@ -280,6 +314,53 @@ def test_provider_style_receipts_are_accepted_and_counted():
     assert performance.json()["counts"]["accepted"] == 1
 
 
+def test_campaign_analysis_aggregates_receipt_failure_metadata():
+    plan = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"}).json()
+    campaign = client.post("/campaigns", json={
+        "agent_run_id": plan["agent_run_id"],
+        "name": plan["plan"]["campaign_name"],
+        "goal": plan["plan"]["goal"],
+        "channel": plan["plan"]["recommended_channel"],
+        "segment_rules": plan["plan"]["recommended_segment"]["rules"],
+        "message_template": plan["plan"]["message_variants"][0]["template"],
+        "approved_plan": plan["plan"],
+    }).json()
+
+    from app import models
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    communication = models.Communication(
+        id="msg_failure_analysis",
+        campaign_id=campaign["id"],
+        customer_id="cus_009",
+        channel="sms",
+        recipient={"name": "Arjun Batra"},
+        message="Hi",
+        status="sent",
+    )
+    db.add(communication)
+    db.commit()
+    db.close()
+
+    receipt = {
+        "event_id": "evt_failure_analysis",
+        "communication_id": "msg_failure_analysis",
+        "campaign_id": campaign["id"],
+        "customer_id": "cus_009",
+        "status": "failed",
+        "metadata": {"reason": "invalid_recipient", "stage": "recipient_validation", "retryable": False},
+    }
+    assert client.post("/receipts", json=receipt).json()["accepted"] is True
+
+    analysis = client.get(f"/campaigns/{campaign['id']}/analysis")
+    assert analysis.status_code == 200
+    payload = analysis.json()
+    assert payload["charts"]["failure_reasons"][0]["key"] == "invalid_recipient"
+    assert payload["failure_examples"][0]["label"] == "Invalid recipient"
+    assert payload["summary"]["next_actions"]
+
+
 def test_campaign_performance_counts_converted_as_purchased():
     plan = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"}).json()
     campaign = client.post("/campaigns", json={
@@ -322,6 +403,16 @@ def test_seeded_draft_campaign_insights_include_audience_notes():
     insights = response.json()["insights"]
     assert any("Delhi is the largest reachable city" in insight for insight in insights)
     assert any("Inactivity split" in insight for insight in insights)
+
+
+def test_seeded_campaign_analysis_includes_failure_charts():
+    response = client.get("/campaigns/cmp_seed_001/analysis")
+    assert response.status_code == 200
+    analysis = response.json()
+    assert analysis["charts"]["funnel"]
+    assert analysis["charts"]["failure_reasons"]
+    assert analysis["charts"]["failure_by_city"]
+    assert analysis["failure_examples"]
 
 
 def test_invalid_segment_rules_are_rejected():

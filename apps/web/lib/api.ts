@@ -39,6 +39,7 @@ export type Summary = {
 
 export type Campaign = {
   id: string;
+  agent_run_id?: string | null;
   name: string;
   goal: string;
   channel: string;
@@ -46,6 +47,7 @@ export type Campaign = {
   created_at: string;
   segment_rules: Record<string, unknown>;
   message_template: string;
+  approved_plan?: Record<string, unknown>;
 };
 
 export type Customer = {
@@ -112,5 +114,44 @@ export type Performance = {
     status: string;
     attributed_revenue: number;
     created_at: string | null;
+    events?: {
+      event_id: string;
+      status: string;
+      metadata: Record<string, unknown>;
+      occurred_at: string | null;
+    }[];
+  }[];
+};
+
+export type ChartItem = {
+  key?: string;
+  label: string;
+  value: number;
+  total?: number;
+  rate?: number;
+};
+
+export type CampaignAnalysis = {
+  summary: {
+    headline: string;
+    findings: string[];
+    next_actions: string[];
+  };
+  charts: {
+    funnel: ChartItem[];
+    failure_reasons: ChartItem[];
+    failure_by_city: ChartItem[];
+    failure_by_loyalty_tier: ChartItem[];
+  };
+  failure_examples: {
+    communication_id: string;
+    customer_id: string;
+    customer_name: string;
+    city: string;
+    loyalty_tier: string;
+    reason: string;
+    label: string;
+    stage: string;
+    retryable: boolean;
   }[];
 };
