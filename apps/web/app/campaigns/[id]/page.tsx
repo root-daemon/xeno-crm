@@ -20,7 +20,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
           <p className="muted">{performance.campaign.status} · {performance.campaign.channel.toUpperCase()} · {performance.campaign.goal}</p>
         </div>
       </div>
-      <section className="grid four">
+      <section className="grid four fade-stack">
         <Metric label="Audience" value={performance.audience_size} />
         <Metric label="Sent" value={performance.counts.sent ?? 0} />
         <Metric label="Delivered" value={performance.counts.delivered ?? 0} />

@@ -19,20 +19,20 @@ export default async function DashboardPage() {
           <h1>Campaign Cockpit</h1>
           <p className="muted">Agentic shopper engagement with approval-gated execution.</p>
         </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div className="actions">
           <SeedButton />
           <Link className="button" href="/campaigns/new">New Agent Campaign</Link>
         </div>
       </div>
-      <section className="grid four">
+      <section className="grid four fade-stack">
         <Metric label="Customers" value={summary.totals.customers} />
         <Metric label="Orders" value={summary.totals.orders} />
         <Metric label="Revenue" value={money.format(summary.totals.revenue)} />
         <Metric label="Messages" value={summary.totals.communications} />
       </section>
-      <section className="panel" style={{ marginTop: 14 }}>
+      <section className="panel section-gap">
         <h2>Recent Campaigns</h2>
-        <div className="grid">
+        <div className="grid fade-stack">
           {summary.recent_campaigns.length ? summary.recent_campaigns.map((campaign) => (
             <Link className="row" href={`/campaigns/${campaign.id}`} key={campaign.id}>
               <strong>{campaign.name}</strong>
