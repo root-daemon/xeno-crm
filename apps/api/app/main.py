@@ -22,6 +22,7 @@ from .services import (
     customer_rows,
     order_rows,
     performance,
+    personalize,
     preview_segment,
     seed_demo_data,
     segment_rows,
@@ -225,17 +226,64 @@ async def send_campaign(campaign_id: str, db: Session = Depends(get_db)) -> dict
     campaign = db.get(models.Campaign, campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="campaign not found")
+    communications = db.scalars(
+        select(models.Communication).where(models.Communication.campaign_id == campaign_id)
+    ).all()
+    if campaign.status == models.CampaignStatus.queued.value and not communications:
+        campaign.status = models.CampaignStatus.approved.value
+        db.flush()
     if campaign.status != models.CampaignStatus.approved.value:
         raise HTTPException(status_code=409, detail="campaign requires approval before send")
+    audience = preview_segment(db, campaign.segment_rules)
+    if not audience:
+        raise HTTPException(status_code=409, detail="campaign audience is empty; seed customers or choose a segment with matching customers")
 
-    async with httpx.AsyncClient(timeout=5) as client:
-        response = await client.post(f"{settings.worker_url}/enqueue/campaign-send", json={"campaign_id": campaign_id})
-        response.raise_for_status()
+    created = 0
+    for customer_row in audience:
+        communication_id = f"msg_{campaign_id}_{customer_row['id']}"
+        if db.get(models.Communication, communication_id):
+            continue
+        customer = db.get(models.Customer, customer_row["id"])
+        if not customer:
+            continue
+        db.add(models.Communication(
+            id=communication_id,
+            campaign_id=campaign_id,
+            customer_id=customer.id,
+            channel=campaign.channel,
+            recipient={"name": customer.name, "phone": customer.phone, "email": customer.email},
+            message=personalize(campaign.message_template, customer),
+            status=models.CommunicationStatus.queued.value,
+            attributed_revenue=0,
+        ))
+        created += 1
 
-    campaign.status = models.CampaignStatus.queued.value
+    campaign.status = models.CampaignStatus.sending.value
     campaign.queued_at = utc_now()
     db.commit()
-    return {"queued": True, "campaign_id": campaign_id}
+
+    async with httpx.AsyncClient(timeout=5) as client:
+        for customer_row in audience:
+            communication_id = f"msg_{campaign_id}_{customer_row['id']}"
+            customer = db.get(models.Customer, customer_row["id"])
+            if not customer:
+                continue
+            response = await client.post(f"{settings.worker_url}/send", json={
+                "campaignId": campaign_id,
+                "customerId": customer_row["id"],
+                "communicationId": communication_id,
+                "recipient": {
+                    "name": customer_row["name"],
+                    "phone": customer_row["phone"],
+                    "email": customer_row["email"],
+                },
+                "channel": campaign.channel,
+                "message": personalize(campaign.message_template, customer),
+                "callbackUrl": settings.receipt_callback_url,
+            })
+            response.raise_for_status()
+
+    return {"queued": True, "campaign_id": campaign_id, "audience_size": len(audience), "communications_created": created}
 
 
 @app.get("/campaigns/{campaign_id}/performance")
@@ -253,5 +301,6 @@ def get_campaign_insights(campaign_id: str, db: Session = Depends(get_db)) -> di
 
 
 @app.post("/receipts")
+@app.post("/api/receipts")
 def receipts(payload: ReceiptIn, db: Session = Depends(get_db)) -> dict:
     return apply_receipt(db, payload.model_dump())

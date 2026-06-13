@@ -10,7 +10,7 @@
   "scripts": {
     "dev:web": "bun --cwd apps/web run dev",
     "dev:worker": "bun --cwd apps/worker run dev",
-    "test": "bun --cwd apps/worker test && python3 -m pytest apps/api/tests",
+    "test": "bun --cwd apps/worker test && cd apps/api && python -m pytest tests",
     "lint": "bun --cwd apps/web run lint",
     "compose:up": "docker compose -f infra/docker-compose.yml up --build",
     "compose:down": "docker compose -f infra/docker-compose.yml down -v"

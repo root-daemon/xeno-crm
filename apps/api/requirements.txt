@@ -1,5 +1,4 @@
 alembic==1.16.1
-anthropic==0.52.2
 fastapi==0.115.12
 httpx==0.28.1
 openai==1.84.0

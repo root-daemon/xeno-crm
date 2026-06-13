@@ -11,14 +11,10 @@ services:
         sync: false
       - key: WORKER_URL
         sync: false
-      - key: ANTHROPIC_API_KEY
+      - key: OPENROUTER_API_KEY
         sync: false
-      - key: ANTHROPIC_MODEL
-        value: claude-3-5-sonnet-latest
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: OPENAI_EMBEDDING_MODEL
-        value: text-embedding-3-small
+      - key: OPENROUTER_MODEL
+        value: google/gemini-2.5-flash
       - key: RUN_MIGRATIONS_ON_STARTUP
         value: "true"
 

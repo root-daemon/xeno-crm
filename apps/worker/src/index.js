@@ -21,6 +21,7 @@ import { statusPlan } from "./lifecycle.js";
 
 const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:8000";
 const port = Number(process.env.PORT ?? process.env.WORKER_PORT ?? 9000);
+const channelServiceUrl = process.env.CHANNEL_SERVICE_URL ?? `http://localhost:${port}`;
 
 const app = express();
 app.use(express.json());
@@ -37,6 +38,29 @@ app.post("/enqueue/campaign-send", async (request, response) => {
   });
   response.status(202).json({ queued: true, job_id: job.id });
 });
+
+async function sendHandler(request, response) {
+  const { campaignId, customerId, communicationId, recipient, channel, message, callbackUrl } = request.body;
+  if (!campaignId || !customerId || !communicationId || !recipient || !channel || !message || !callbackUrl) {
+    return response.status(400).json({
+      error: "campaignId, customerId, communicationId, recipient, channel, message and callbackUrl are required"
+    });
+  }
+
+  const providerMessageId = communicationId;
+  scheduleChannelCallbacks({
+    providerMessageId,
+    communicationId,
+    campaignId,
+    customerId,
+    callbackUrl
+  });
+
+  response.status(202).json({ providerMessageId, status: "accepted" });
+}
+
+app.post("/send", sendHandler);
+app.post("/channel/send", sendHandler);
 
 new Worker("campaign.send", async (job) => {
   const { campaign_id } = job.data;
@@ -55,11 +79,20 @@ new Worker("campaign.send", async (job) => {
        on conflict on constraint uq_campaign_customer do nothing`,
       [communicationId, campaign_id, customer.id, campaign.channel, JSON.stringify({ name: customer.name, phone: customer.phone, email: customer.email }), message]
     );
-    await channelQueue.add("channel.deliver", { communication_id: communicationId }, {
-      jobId: `channel.deliver.${communicationId}`,
-      attempts: 3,
-      backoff: { type: "exponential", delay: 500 }
+    const channelResponse = await fetch(`${channelServiceUrl}/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        campaignId: campaign_id,
+        customerId: customer.id,
+        communicationId,
+        recipient: { name: customer.name, phone: customer.phone, email: customer.email },
+        channel: campaign.channel,
+        message,
+        callbackUrl: `${apiBaseUrl}/receipts`
+      })
     });
+    if (!channelResponse.ok) throw new Error(`Channel send failed ${channelResponse.status}`);
   }
   return { created: audience.length };
 }, { connection });
@@ -70,16 +103,20 @@ new Worker("channel.deliver", async (job) => {
 
   for (const item of statusPlan(communication)) {
     await sleep(item.delay);
+    const providerMessageId = job.data.provider_message_id ?? communication.id;
+    const occurredAt = new Date().toISOString();
     const receipt = {
       event_id: `${communication.id}_${item.status}`,
       communication_id: communication.id,
+      providerMessageId,
       campaign_id: communication.campaign_id,
       customer_id: communication.customer_id,
       status: item.status,
-      occurred_at: new Date().toISOString(),
+      occurred_at: occurredAt,
+      timestamp: occurredAt,
       metadata: item.metadata ?? {}
     };
-    const response = await fetch(`${apiBaseUrl}/receipts`, {
+    const response = await fetch(job.data.callback_url ?? `${apiBaseUrl}/receipts`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(receipt)
@@ -131,4 +168,39 @@ function personalize(template, customer) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function scheduleChannelCallbacks({ providerMessageId, communicationId, campaignId, customerId, callbackUrl }) {
+  let elapsed = 0;
+  const plan = statusPlan({ id: communicationId, customer_id: customerId });
+  for (const item of plan) {
+    elapsed += item.delay;
+    setTimeout(async () => {
+      const occurredAt = new Date().toISOString();
+      const receipt = {
+        event_id: `${communicationId}_${item.status}`,
+        communication_id: communicationId,
+        providerMessageId,
+        campaign_id: campaignId,
+        customer_id: customerId,
+        status: item.status,
+        occurred_at: occurredAt,
+        timestamp: occurredAt,
+        metadata: item.metadata ?? {}
+      };
+
+      try {
+        const callbackResponse = await fetch(callbackUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(receipt)
+        });
+        if (!callbackResponse.ok) {
+          console.error(`Receipt callback failed ${callbackResponse.status}`, receipt);
+        }
+      } catch (error) {
+        console.error("Receipt callback failed", error);
+      }
+    }, elapsed);
+  }
 }

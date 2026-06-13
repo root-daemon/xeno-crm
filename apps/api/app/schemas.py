@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Channel = Literal["whatsapp", "sms", "email", "rcs"]
 OrderChannel = Literal["store", "online", "whatsapp", "sms", "email", "rcs"]
-CommunicationStatusValue = Literal["queued", "sent", "delivered", "opened", "read", "clicked", "converted", "failed"]
+CommunicationStatusValue = Literal["queued", "accepted", "sent", "delivered", "opened", "read", "clicked", "converted", "failed"]
 
 
 class CustomerIn(BaseModel):
@@ -96,10 +96,32 @@ class CampaignCreateRequest(BaseModel):
 
 
 class ReceiptIn(BaseModel):
-    event_id: str = Field(min_length=1)
-    communication_id: str = Field(min_length=1)
+    event_id: Optional[str] = Field(default=None, min_length=1)
+    communication_id: Optional[str] = Field(default=None, min_length=1)
     campaign_id: str = Field(min_length=1)
     customer_id: str = Field(min_length=1)
     status: CommunicationStatusValue
     occurred_at: Optional[datetime] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_provider_payload(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        if not normalized.get("communication_id"):
+            normalized["communication_id"] = normalized.get("providerMessageId") or normalized.get("provider_message_id")
+        if not normalized.get("occurred_at") and normalized.get("timestamp"):
+            normalized["occurred_at"] = normalized["timestamp"]
+        return normalized
+
+    @model_validator(mode="after")
+    def fill_provider_style_fields(self) -> "ReceiptIn":
+        if not self.communication_id:
+            raise ValueError("communication_id or providerMessageId is required")
+        if not self.event_id:
+            self.event_id = f"{self.communication_id}_{self.status}"
+        return self

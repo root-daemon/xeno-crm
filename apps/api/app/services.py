@@ -6,17 +6,18 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import models
-from .seed import CAMPAIGNS, COMMUNICATIONS, CUSTOMERS, ORDERS
+from .seed import CAMPAIGNS, COMMUNICATIONS, CUSTOMERS, ORDERS, SEGMENTS
 from .time import utc_now
 
 STATUS_RANK = {
     "queued": 0,
-    "sent": 1,
-    "delivered": 2,
-    "opened": 3,
-    "read": 4,
-    "clicked": 5,
-    "converted": 6,
+    "accepted": 1,
+    "sent": 2,
+    "delivered": 3,
+    "opened": 4,
+    "read": 5,
+    "clicked": 6,
+    "converted": 7,
     "failed": 99,
 }
 
@@ -40,6 +41,12 @@ def seed_demo_data(db: Session) -> dict[str, int]:
     for item in ORDERS:
         if not db.get(models.Order, item["id"]):
             db.add(models.Order(**item))
+    db.commit()
+
+    for item in SEGMENTS:
+        if db.get(models.Segment, item["id"]):
+            continue
+        db.add(models.Segment(**item))
     db.commit()
 
     for item in CAMPAIGNS:
@@ -79,7 +86,13 @@ def seed_demo_data(db: Session) -> dict[str, int]:
         ))
     db.commit()
 
-    return {"customers": len(CUSTOMERS), "orders": len(ORDERS), "campaigns": len(CAMPAIGNS), "communications": len(COMMUNICATIONS)}
+    return {
+        "customers": len(CUSTOMERS),
+        "orders": len(ORDERS),
+        "segments": len(SEGMENTS),
+        "campaigns": len(CAMPAIGNS),
+        "communications": len(COMMUNICATIONS),
+    }
 
 
 def customer_rows(db: Session) -> list[dict[str, Any]]:
@@ -208,7 +221,7 @@ def personalize(template: str, customer: models.Customer) -> str:
 def performance(db: Session, campaign_id: str) -> dict[str, Any]:
     campaign = db.get(models.Campaign, campaign_id)
     communications = db.scalars(select(models.Communication).where(models.Communication.campaign_id == campaign_id)).all()
-    counts = {key: 0 for key in ["queued", "sent", "delivered", "failed", "opened", "read", "clicked", "converted"]}
+    counts = {key: 0 for key in ["queued", "accepted", "sent", "delivered", "failed", "opened", "read", "clicked", "converted"]}
     for communication in communications:
         statuses = {event.status for event in communication.events}
         statuses.add(communication.status)

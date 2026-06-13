@@ -1,18 +1,12 @@
 from __future__ import annotations
 
 import json
-import math
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from .config import settings
 from .services import customer_rows, preview_segment
-
-try:
-    from anthropic import Anthropic
-except ImportError:  # pragma: no cover - dependency is installed in normal runtime
-    Anthropic = None  # type: ignore
 
 try:
     from openai import OpenAI
@@ -39,25 +33,25 @@ def build_campaign_plan(db: Session, goal: str) -> dict[str, Any]:
     insights = retrieve_audience_insights(goal, rows, tool_calls)
     fallback_plan = build_local_plan(db, goal, rows, insights)
 
-    if not settings.anthropic_api_key:
+    if not settings.openrouter_api_key:
         fallback_plan["model"] = "local-deterministic-fallback"
         fallback_plan["tool_calls"] = tool_calls + fallback_plan["tool_calls"]
         return fallback_plan
 
     try:
-        ai_payload = call_anthropic_plan(goal, rows, insights)
+        ai_payload = call_openrouter_plan(goal, rows, insights)
         plan = normalize_plan(db, goal, ai_payload, fallback_plan)
-        plan["model"] = settings.anthropic_model
+        plan["model"] = settings.openrouter_model
         plan["tool_calls"] = tool_calls + [
-            {"tool": "anthropic_campaign_planner", "result": {"status": "validated"}},
+            {"tool": "openrouter_campaign_planner", "result": {"status": "validated"}},
             *plan["tool_calls"],
         ]
         plan["raw_model_response"] = ai_payload
         return plan
     except Exception as exc:
-        fallback_plan["model"] = f"{settings.anthropic_model}-fallback"
+        fallback_plan["model"] = f"{settings.openrouter_model}-fallback"
         fallback_plan["tool_calls"] = tool_calls + [
-            {"tool": "anthropic_campaign_planner", "result": {"status": "failed", "error": str(exc)}},
+            {"tool": "openrouter_campaign_planner", "result": {"status": "failed", "error": str(exc)}},
             *fallback_plan["tool_calls"],
         ]
         fallback_plan["validation_errors"] = [str(exc)]
@@ -117,86 +111,59 @@ def build_local_plan(db: Session, goal: str, rows: list[dict[str, Any]], insight
 
 
 def retrieve_audience_insights(goal: str, rows: list[dict[str, Any]], tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    documents = customer_documents(rows)
-    if not documents:
+    # OpenRouter is a chat-completion gateway with no embeddings endpoint, so
+    # audience insight retrieval uses a deterministic goal-aware heuristic.
+    if not rows:
         return []
-
-    if not settings.openai_api_key:
-        insights = deterministic_insights(goal, rows)
-        tool_calls.append({
-            "tool": "retrieve_audience_insights",
-            "provider": "local",
-            "result": {"insights": insights},
-        })
-        return insights
-
-    try:
-        client = OpenAI(api_key=settings.openai_api_key)  # type: ignore[operator]
-        response = client.embeddings.create(
-            model=settings.openai_embedding_model,
-            input=[goal, *[item["text"] for item in documents]],
-        )
-        vectors = [item.embedding for item in response.data]
-        goal_vector = vectors[0]
-        scored = sorted(
-            (
-                {
-                    "customer_id": document["customer_id"],
-                    "text": document["text"],
-                    "score": round(cosine_similarity(goal_vector, vector), 4),
-                }
-                for document, vector in zip(documents, vectors[1:])
-            ),
-            key=lambda item: item["score"],
-            reverse=True,
-        )
-        insights = scored[:3]
-        tool_calls.append({
-            "tool": "retrieve_audience_insights",
-            "provider": "openai",
-            "model": settings.openai_embedding_model,
-            "result": {"matches": insights},
-        })
-        return insights
-    except Exception as exc:
-        insights = deterministic_insights(goal, rows)
-        tool_calls.append({
-            "tool": "retrieve_audience_insights",
-            "provider": "openai",
-            "result": {"status": "failed", "error": str(exc), "fallback_insights": insights},
-        })
-        return insights
+    insights = deterministic_insights(goal, rows)
+    tool_calls.append({
+        "tool": "retrieve_audience_insights",
+        "provider": "local",
+        "result": {"insights": insights},
+    })
+    return insights
 
 
-def call_anthropic_plan(goal: str, rows: list[dict[str, Any]], insights: list[dict[str, Any]]) -> dict[str, Any]:
-    client = Anthropic(api_key=settings.anthropic_api_key)  # type: ignore[operator]
-    response = client.messages.create(
-        model=settings.anthropic_model,
+def call_openrouter_plan(goal: str, rows: list[dict[str, Any]], insights: list[dict[str, Any]]) -> dict[str, Any]:
+    client = OpenAI(  # type: ignore[operator]
+        api_key=settings.openrouter_api_key,
+        base_url=settings.openrouter_base_url,
+    )
+    response = client.chat.completions.create(
+        model=settings.openrouter_model,
         max_tokens=1200,
         temperature=0.2,
-        system=(
-            "You are a CRM campaign planning agent. Return only JSON. "
-            "The plan must require marketer approval and use only channels: whatsapp, sms, email, rcs. "
-            "Segment rules may only use channel, city, loyalty_tier, min_lifetime_value, "
-            "min_last_order_days_ago, max_last_order_days_ago, and tag."
-        ),
-        messages=[{
-            "role": "user",
-            "content": json.dumps({
-                "goal": goal,
-                "customer_summary": customer_summary(rows),
-                "retrieved_insights": insights,
-                "required_shape": {
-                    "campaign_name": "short campaign name",
-                    "recommended_segment": {"rules": {"channel": "sms"}, "reasoning": "why this segment"},
-                    "recommended_channel": "sms",
-                    "message_variants": [{"label": "direct", "template": "Hi {{name}}, ..."}],
-                    "risk_notes": ["Requires marketer approval before send."],
-                },
-            }),
-        }],
+        response_format={"type": "json_object"},
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a CRM campaign planning agent. Return only JSON. "
+                    "The plan must require marketer approval and use only channels: whatsapp, sms, email, rcs. "
+                    "Segment rules may only use channel, city, loyalty_tier, min_lifetime_value, "
+                    "min_last_order_days_ago, max_last_order_days_ago, and tag."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps({
+                    "goal": goal,
+                    "customer_summary": customer_summary(rows),
+                    "retrieved_insights": insights,
+                    "required_shape": {
+                        "campaign_name": "short campaign name",
+                        "recommended_segment": {"rules": {"channel": "sms"}, "reasoning": "why this segment"},
+                        "recommended_channel": "sms",
+                        "message_variants": [{"label": "direct", "template": "Hi {{name}}, ..."}],
+                        "risk_notes": ["Requires marketer approval before send."],
+                    },
+                }),
+            },
+        ],
     )
-    text = extract_text(response)
+    text = response.choices[0].message.content
+    if not text:
+        raise ValueError("OpenRouter response did not include content")
     return json.loads(text)
 
 
@@ -224,7 +191,7 @@ def normalize_plan(db: Session, goal: str, payload: dict[str, Any], fallback_pla
         "audience_insights": fallback_plan.get("audience_insights", []),
         "expected_audience_size": len(audience),
         "requires_approval": True,
-        "model": settings.anthropic_model,
+        "model": settings.openrouter_model,
         "tool_calls": [
             {"tool": "preview_segment", "args": rules, "result": {"audience_size": len(audience)}},
             {"tool": "draft_message_variants", "result": {"variants": len(variants)}},
@@ -301,10 +268,6 @@ def deterministic_insights(goal: str, rows: list[dict[str, Any]]) -> list[dict[s
     ]
 
 
-def customer_documents(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
-    return [{"customer_id": row["id"], "text": customer_document(row)} for row in rows]
-
-
 def customer_document(row: dict[str, Any]) -> str:
     tags = ", ".join(row["tags"]) if row["tags"] else "no tags"
     return (
@@ -322,21 +285,3 @@ def count_by(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
     return counts
 
 
-def cosine_similarity(left: list[float], right: list[float]) -> float:
-    numerator = sum(a * b for a, b in zip(left, right))
-    left_norm = math.sqrt(sum(a * a for a in left))
-    right_norm = math.sqrt(sum(b * b for b in right))
-    if left_norm == 0 or right_norm == 0:
-        return 0
-    return numerator / (left_norm * right_norm)
-
-
-def extract_text(response: Any) -> str:
-    chunks = []
-    for block in getattr(response, "content", []):
-        text = getattr(block, "text", None)
-        if text:
-            chunks.append(text)
-    if not chunks:
-        raise ValueError("Anthropic response did not include text content")
-    return "\n".join(chunks).strip()
