@@ -21,6 +21,16 @@ STATUS_RANK = {
 }
 
 
+def count_by(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = row.get(key)
+        if value is None:
+            continue
+        counts[str(value)] = counts.get(str(value), 0) + 1
+    return counts
+
+
 def seed_demo_data(db: Session) -> dict[str, int]:
     from datetime import timedelta, timezone
 
