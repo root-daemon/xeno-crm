@@ -33,6 +33,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://xeno:xeno@postgres:5432/xeno
       WORKER_URL: http://worker:9000
+      RECEIPT_CALLBACK_URL: http://api:8000/receipts
     ports:
       - "8000:8000"
     depends_on:

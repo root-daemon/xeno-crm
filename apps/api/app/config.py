@@ -8,10 +8,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./xeno_dev.db"
     worker_url: str = "http://localhost:9000"
-    anthropic_api_key: Optional[str] = None
-    anthropic_model: str = "claude-3-5-sonnet-latest"
-    openai_api_key: Optional[str] = None
-    openai_embedding_model: str = "text-embedding-3-small"
+    receipt_callback_url: str = "http://localhost:8000/receipts"
+    # AI — single OpenRouter gateway (OpenAI-compatible API).
+    openrouter_api_key: Optional[str] = None
+    openrouter_model: str = "google/gemini-2.5-flash"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
     run_migrations_on_startup: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

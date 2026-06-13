@@ -31,6 +31,7 @@ class CampaignStatus(str, Enum):
 
 class CommunicationStatus(str, Enum):
     queued = "queued"
+    accepted = "accepted"
     sent = "sent"
     delivered = "delivered"
     opened = "opened"

@@ -13,9 +13,10 @@ flowchart LR
   API --> WorkerAPI["Worker Enqueue API"]
   WorkerAPI --> Redis["Redis + BullMQ"]
   Redis --> CampaignWorker["Campaign Worker"]
+  CampaignWorker --> FakeChannel["Fake Channel Service /send"]
+  FakeChannel --> Redis
   Redis --> ChannelWorker["Channel Simulator Worker"]
   CampaignWorker --> PG
-  CampaignWorker --> Redis
   ChannelWorker --> ReceiptAPI["FastAPI /receipts"]
   ReceiptAPI --> PG
   API --> Agent["AI Agent Layer"]
@@ -27,14 +28,13 @@ flowchart LR
 
 - `apps/web`: Next.js frontend campaign cockpit.
 - `apps/api`: FastAPI backend, SQLAlchemy models, AI agent orchestration, receipt ingestion.
-- `apps/worker`: Node worker with real BullMQ queues for campaign dispatch and channel simulation.
+- `apps/worker`: Node worker with real BullMQ queues plus a stubbed `/send` channel service that simulates provider delivery callbacks.
 - `infra/docker-compose.yml`: Postgres, Redis, API, worker, and web.
 
 ## AI Features
 
-- Anthropic-first campaign planning with structured output.
-- OpenAI embeddings hook for audience insight retrieval.
-- Deterministic local fallback when API keys are absent, so reviewers can run the app.
+- Campaign planning with schema-validated structured output, served through a single OpenRouter gateway (one key, swappable models: Gemini, Claude, Qwen).
+- Deterministic local fallback when the model is rate-limited or the key is absent, so the planner never hard-fails and reviewers can always run the app.
 - Approval-gated execution: the agent can draft campaigns but cannot send without marketer approval.
 - Agent tool trace persisted in `agent_runs`.
 
@@ -82,11 +82,15 @@ flowchart LR
 
 1. Import your GitHub repo at [vercel.com](https://vercel.com/new).
 2. **Set root directory to `apps/web`** (Framework will auto-detect as Next.js).
-3. Add one env var:
+3. Add env vars:
 
 | Key | Value |
 |-----|-------|
 | `NEXT_PUBLIC_API_BASE_URL` | Public URL of xeno-api (e.g. `https://xeno-api.onrender.com`) |
+| `API_BASE_URL` | Same xeno-api URL (server-side fetch from route handlers) |
+| `OPENROUTER_API_KEY` | OpenRouter key — powers the AI campaign planner. Get one at [openrouter.ai/keys](https://openrouter.ai/keys) |
+
+The campaign planner defaults to `google/gemini-2.5-flash` (~$0.0005 per plan). If the model is rate-limited or the key is missing, the planner automatically degrades to a deterministic plan so the demo never breaks.
 
 Deploy. Your frontend URL is the live product URL.
 
@@ -124,7 +128,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -q
 .venv/bin/python -m pytest tests/ -q
 
 # Worker
-cd apps/worker && npm install && node --test test/lifecycle.test.js
+bun --cwd apps/worker test
 ```
 
 ## Demo Flow
@@ -134,12 +138,13 @@ cd apps/worker && npm install && node --test test/lifecycle.test.js
 3. Ask: `Win back shoppers who have not purchased in 60 days with a personalized WhatsApp or SMS offer.`
 4. Review the agent plan and create a campaign draft.
 5. Approve and send.
-6. Watch BullMQ-backed channel callbacks update performance.
+6. Watch the fake channel service callbacks update performance.
 
 ## Scale Decisions
 
 - Postgres is the durable source of truth.
 - Redis is only queue/transient infrastructure.
 - BullMQ workers isolate high-volume dispatch and channel lifecycle simulation from API requests.
+- The CRM calls a separate fake channel `/send` endpoint per recipient; that service returns `accepted` and later calls back with delivery and engagement receipts.
 - Receipt ingestion is idempotent and preserves highest lifecycle state when events arrive out of order.
 - The channel service remains stubbed as required by the assignment.

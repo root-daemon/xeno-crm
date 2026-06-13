@@ -5,6 +5,9 @@ from pathlib import Path
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["RUN_MIGRATIONS_ON_STARTUP"] = "false"
+# Force the deterministic planner so tests never make a live OpenRouter call.
+# (env vars take precedence over the .env file in pydantic-settings.)
+os.environ["OPENROUTER_API_KEY"] = ""
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -29,6 +32,16 @@ def test_segment_preview_lapsed_sms():
     assert "cus_009" in ids
     assert "cus_012" in ids
     assert all(customer_id.startswith("cus_") for customer_id in ids)
+
+
+def test_seed_creates_saved_segments_for_manual_campaigns():
+    response = client.get("/segments")
+    assert response.status_code == 200
+    segments = response.json()
+    names = {segment["name"] for segment in segments}
+    assert "Inactive SMS Shoppers" in names
+    assert "VIP WhatsApp Shoppers" in names
+    assert any(segment["rules"] == {"channel": "sms", "min_last_order_days_ago": 60} for segment in segments)
 
 
 def test_segments_can_be_saved_and_listed():
@@ -73,62 +86,48 @@ def test_agent_plan_is_structured():
     assert payload["plan"]["recommended_channel"] == "sms"
 
 
-def test_agent_uses_anthropic_structured_plan(monkeypatch):
-    from app import agent
-    from app.config import settings
-
-    class FakeAnthropic:
-        def __init__(self, api_key):
-            assert api_key == "test-anthropic-key"
-            self.messages = self
-
-        def create(self, **kwargs):
-            assert kwargs["model"] == settings.anthropic_model
-            return SimpleNamespace(content=[
-                SimpleNamespace(text="""{
-                    "campaign_name": "AI VIP Push",
-                    "recommended_segment": {
-                        "rules": {"channel": "whatsapp", "min_lifetime_value": 7000},
-                        "reasoning": "Prioritize high-value opted-in shoppers."
-                    },
-                    "recommended_channel": "whatsapp",
-                    "message_variants": [{"label": "vip", "template": "Hi {{name}}, your private edit is ready."}],
-                    "risk_notes": ["Requires marketer approval before send."]
-                }""")
-            ])
-
-    monkeypatch.setattr(settings, "anthropic_api_key", "test-anthropic-key")
-    monkeypatch.setattr(settings, "openai_api_key", None)
-    monkeypatch.setattr(agent, "Anthropic", FakeAnthropic)
-
-    response = client.post("/agent/campaign-plan", json={"goal": "Reach premium VIP customers"})
-    assert response.status_code == 200
-    plan = response.json()["plan"]
-    assert plan["model"] == settings.anthropic_model
-    assert plan["campaign_name"] == "AI VIP Push"
-    assert plan["recommended_segment"]["rules"] == {"channel": "whatsapp", "min_lifetime_value": 7000.0}
-    assert plan["expected_audience_size"] >= 3
-    assert any(call["tool"] == "anthropic_campaign_planner" for call in plan["tool_calls"])
-
-
-def test_agent_uses_openai_embeddings_for_insights(monkeypatch):
+def test_agent_uses_openrouter_structured_plan(monkeypatch):
     from app import agent
     from app.config import settings
 
     class FakeOpenAI:
-        def __init__(self, api_key):
-            assert api_key == "test-openai-key"
-            self.embeddings = self
+        def __init__(self, api_key, base_url):
+            assert api_key == "test-openrouter-key"
+            assert base_url == settings.openrouter_base_url
+            self.chat = SimpleNamespace(completions=self)
 
         def create(self, **kwargs):
-            assert kwargs["model"] == settings.openai_embedding_model
-            vectors = [[1.0, 0.0]]
-            vectors.extend([[1.0, 0.0] for _ in kwargs["input"][1:]])
-            return SimpleNamespace(data=[SimpleNamespace(embedding=vector) for vector in vectors])
+            assert kwargs["model"] == settings.openrouter_model
+            assert kwargs["response_format"] == {"type": "json_object"}
+            content = """{
+                "campaign_name": "AI VIP Push",
+                "recommended_segment": {
+                    "rules": {"channel": "whatsapp", "min_lifetime_value": 7000},
+                    "reasoning": "Prioritize high-value opted-in shoppers."
+                },
+                "recommended_channel": "whatsapp",
+                "message_variants": [{"label": "vip", "template": "Hi {{name}}, your private edit is ready."}],
+                "risk_notes": ["Requires marketer approval before send."]
+            }"""
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
-    monkeypatch.setattr(settings, "anthropic_api_key", None)
-    monkeypatch.setattr(settings, "openai_api_key", "test-openai-key")
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-openrouter-key")
     monkeypatch.setattr(agent, "OpenAI", FakeOpenAI)
+
+    response = client.post("/agent/campaign-plan", json={"goal": "Reach premium VIP customers"})
+    assert response.status_code == 200
+    plan = response.json()["plan"]
+    assert plan["model"] == settings.openrouter_model
+    assert plan["campaign_name"] == "AI VIP Push"
+    assert plan["recommended_segment"]["rules"] == {"channel": "whatsapp", "min_lifetime_value": 7000.0}
+    assert plan["expected_audience_size"] >= 3
+    assert any(call["tool"] == "openrouter_campaign_planner" for call in plan["tool_calls"])
+
+
+def test_agent_falls_back_when_no_key(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "openrouter_api_key", None)
 
     response = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"})
     assert response.status_code == 200
@@ -136,8 +135,7 @@ def test_agent_uses_openai_embeddings_for_insights(monkeypatch):
     assert plan["model"] == "local-deterministic-fallback"
     assert plan["audience_insights"]
     retrieval_call = next(call for call in plan["tool_calls"] if call["tool"] == "retrieve_audience_insights")
-    assert retrieval_call["provider"] == "openai"
-    assert retrieval_call["model"] == settings.openai_embedding_model
+    assert retrieval_call["provider"] == "local"
 
 
 def test_campaign_requires_approval_before_send():
@@ -153,6 +151,55 @@ def test_campaign_requires_approval_before_send():
     }).json()
     response = client.post(f"/campaigns/{campaign['id']}/send")
     assert response.status_code == 409
+
+
+def test_send_creates_communications_and_calls_fake_channel(monkeypatch):
+    from app import main
+
+    sent_payloads = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json):
+            sent_payloads.append({"url": url, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
+
+    plan = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"}).json()
+    campaign = client.post("/campaigns", json={
+        "agent_run_id": plan["agent_run_id"],
+        "name": plan["plan"]["campaign_name"],
+        "goal": plan["plan"]["goal"],
+        "channel": plan["plan"]["recommended_channel"],
+        "segment_rules": plan["plan"]["recommended_segment"]["rules"],
+        "message_template": plan["plan"]["message_variants"][0]["template"],
+        "approved_plan": plan["plan"],
+    }).json()
+    client.post(f"/campaigns/{campaign['id']}/approve")
+
+    response = client.post(f"/campaigns/{campaign['id']}/send")
+    assert response.status_code == 200
+    assert response.json()["communications_created"] > 0
+    assert sent_payloads
+    assert all(call["url"].endswith("/send") for call in sent_payloads)
+    assert all(call["json"]["callbackUrl"].endswith("/receipts") for call in sent_payloads)
+
+    performance = client.get(f"/campaigns/{campaign['id']}/performance").json()
+    assert performance["audience_size"] == len(sent_payloads)
+    assert performance["counts"]["queued"] == len(sent_payloads)
 
 
 def test_receipts_are_idempotent_and_order_safe():
@@ -189,6 +236,48 @@ def test_receipts_are_idempotent_and_order_safe():
     assert client.post("/receipts", json=read).json()["accepted"] is True
     assert client.post("/receipts", json=read).json()["accepted"] is False
     assert client.post("/receipts", json=opened).json()["status"] == "read"
+
+
+def test_provider_style_receipts_are_accepted_and_counted():
+    plan = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"}).json()
+    campaign = client.post("/campaigns", json={
+        "agent_run_id": plan["agent_run_id"],
+        "name": plan["plan"]["campaign_name"],
+        "goal": plan["plan"]["goal"],
+        "channel": plan["plan"]["recommended_channel"],
+        "segment_rules": plan["plan"]["recommended_segment"]["rules"],
+        "message_template": plan["plan"]["message_variants"][0]["template"],
+        "approved_plan": plan["plan"],
+    }).json()
+
+    from app import models
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    communication = models.Communication(
+        id="msg_provider_style",
+        campaign_id=campaign["id"],
+        customer_id="cus_009",
+        channel="sms",
+        recipient={},
+        message="Hi",
+        status="queued",
+    )
+    db.add(communication)
+    db.commit()
+    db.close()
+
+    receipt = {
+        "providerMessageId": "msg_provider_style",
+        "campaign_id": campaign["id"],
+        "customer_id": "cus_009",
+        "status": "accepted",
+        "timestamp": "2026-06-13T10:30:00Z",
+    }
+    assert client.post("/api/receipts", json=receipt).json()["accepted"] is True
+
+    performance = client.get(f"/campaigns/{campaign['id']}/performance")
+    assert performance.json()["counts"]["accepted"] == 1
 
 
 def test_campaign_performance_counts_converted_as_purchased():

@@ -151,6 +151,37 @@ ORDERS = [
 ]
 
 # ---------------------------------------------------------------------------
+# Saved Segments
+# ---------------------------------------------------------------------------
+SEGMENTS = [
+    {
+        "id": "seg_seed_lapsed_sms",
+        "name": "Inactive SMS Shoppers",
+        "rules": {"channel": "sms", "min_last_order_days_ago": 60},
+    },
+    {
+        "id": "seg_seed_vip_whatsapp",
+        "name": "VIP WhatsApp Shoppers",
+        "rules": {"channel": "whatsapp", "min_lifetime_value": 7000},
+    },
+    {
+        "id": "seg_seed_festive_email",
+        "name": "Festive Email Buyers",
+        "rules": {"channel": "email", "tag": "festive"},
+    },
+    {
+        "id": "seg_seed_recent_whatsapp",
+        "name": "Recent WhatsApp Buyers",
+        "rules": {"channel": "whatsapp", "max_last_order_days_ago": 30},
+    },
+    {
+        "id": "seg_seed_delhi_whatsapp",
+        "name": "Delhi WhatsApp Shoppers",
+        "rules": {"channel": "whatsapp", "city": "Delhi"},
+    },
+]
+
+# ---------------------------------------------------------------------------
 # Campaigns
 # ---------------------------------------------------------------------------
 # statuses: draft | approved | queued | sending | completed

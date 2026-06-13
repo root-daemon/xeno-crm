@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Xeno Agentic Mini CRM — Walkthrough</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+<style>
+  :root{
+    --bg:#070A12;
+    --bg2:#0B1020;
+    --ink:#EAF0FF;
+    --muted:#94A3C0;
+    --faint:#5C6A86;
+    --line:rgba(255,255,255,.08);
+    --card:rgba(255,255,255,.035);
+    --card-edge:rgba(255,255,255,.10);
+    --blue:#3B82F6;
+    --cyan:#22D3EE;
+    --violet:#8B5CF6;
+    --pink:#EC4899;
+    --green:#34D399;
+    --amber:#FBBF24;
+    --grad:linear-gradient(120deg,#22D3EE 0%,#3B82F6 45%,#8B5CF6 100%);
+    --grad-soft:linear-gradient(120deg,rgba(34,211,238,.16),rgba(139,92,246,.16));
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:'Inter',system-ui,sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* ambient background */
+  .aurora{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+  .aurora::before,.aurora::after{
+    content:"";position:absolute;width:60vw;height:60vw;border-radius:50%;
+    filter:blur(120px);opacity:.45;
+  }
+  .aurora::before{background:radial-gradient(circle,#1E3A8A,transparent 60%);top:-15vw;left:-10vw;animation:float1 18s ease-in-out infinite}
+  .aurora::after{background:radial-gradient(circle,#5B21B6,transparent 60%);bottom:-20vw;right:-12vw;animation:float2 22s ease-in-out infinite}
+  .grid-overlay{position:fixed;inset:0;z-index:0;pointer-events:none;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:54px 54px;mask-image:radial-gradient(circle at 50% 40%,#000 0%,transparent 78%);opacity:.5}
+  @keyframes float1{50%{transform:translate(6vw,4vw) scale(1.1)}}
+  @keyframes float2{50%{transform:translate(-5vw,-3vw) scale(1.15)}}
+
+  /* deck */
+  .deck{position:relative;z-index:2;height:100vh;width:100vw}
+  .slide{
+    position:absolute;inset:0;display:none;
+    padding:5.5vh 7vw 8vh;
+    flex-direction:column;justify-content:center;
+    animation:slideIn .6s cubic-bezier(.2,.7,.2,1) both;
+  }
+  .slide.active{display:flex}
+  @keyframes slideIn{from{opacity:0;transform:translateY(24px) scale(.99)}to{opacity:1;transform:none}}
+  .reveal{opacity:0;transform:translateY(18px);animation:rise .65s cubic-bezier(.2,.7,.2,1) forwards}
+  .slide.active .reveal{animation-delay:calc(var(--i,0) * .09s + .12s)}
+  @keyframes rise{to{opacity:1;transform:none}}
+
+  /* typography */
+  .kicker{display:inline-flex;align-items:center;gap:.55rem;font-size:.74rem;letter-spacing:.22em;
+    text-transform:uppercase;color:var(--cyan);font-weight:600;margin-bottom:1.2rem}
+  .kicker .dot{width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 14px var(--cyan)}
+  h1{font-size:clamp(2.6rem,6vw,5rem);line-height:1.02;font-weight:800;letter-spacing:-.03em}
+  h2{font-size:clamp(1.9rem,3.6vw,3rem);line-height:1.05;font-weight:800;letter-spacing:-.025em;margin-bottom:.4rem}
+  .lead{font-size:clamp(1rem,1.5vw,1.25rem);color:var(--muted);max-width:62ch;line-height:1.6;font-weight:400}
+  .gradient{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .section-head{margin-bottom:2.4rem;max-width:70ch}
+  .eyebrow{font-size:.78rem;letter-spacing:.2em;text-transform:uppercase;color:var(--violet);font-weight:600;margin-bottom:.7rem}
+
+  /* cards */
+  .card{background:var(--card);border:1px solid var(--card-edge);border-radius:18px;padding:1.5rem 1.6rem;
+    backdrop-filter:blur(8px);position:relative;overflow:hidden;transition:.4s}
+  .card:hover{transform:translateY(-4px);border-color:rgba(255,255,255,.2);background:rgba(255,255,255,.06)}
+  .card .ico{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;font-size:1.15rem;margin-bottom:1rem;
+    background:var(--grad-soft);border:1px solid var(--card-edge)}
+  .card h3{font-size:1.06rem;font-weight:700;margin-bottom:.4rem;letter-spacing:-.01em}
+  .card p{font-size:.9rem;color:var(--muted);line-height:1.55}
+  .card .tag{font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--cyan);font-weight:500}
+
+  .grid{display:grid;gap:1.1rem}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+
+  /* title slide */
+  .title-wrap{max-width:1100px}
+  .logo-row{display:flex;align-items:center;gap:1rem;margin-bottom:2.2rem}
+  .logo-mark{width:52px;height:52px;border-radius:14px;background:var(--grad);display:grid;place-items:center;
+    font-weight:900;font-size:1.5rem;color:#06101f;box-shadow:0 10px 40px rgba(59,130,246,.4)}
+  .logo-text{font-weight:700;font-size:1.15rem;letter-spacing:.02em}
+  .logo-text span{color:var(--muted);font-weight:400}
+  .title-meta{display:flex;gap:2.4rem;margin-top:2.8rem;flex-wrap:wrap}
+  .title-meta div{}
+  .title-meta .l{font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;color:var(--faint);margin-bottom:.35rem}
+  .title-meta .v{font-size:1rem;font-weight:600;color:var(--ink)}
+  .pill{display:inline-flex;align-items:center;gap:.5rem;padding:.5rem 1rem;border-radius:999px;
+    background:var(--grad-soft);border:1px solid var(--card-edge);font-size:.82rem;font-weight:500;color:var(--ink)}
+
+  /* architecture diagram */
+  .arch{display:flex;flex-direction:column;gap:0;width:100%;max-width:1180px;margin:0 auto}
+  .arch-row{display:flex;align-items:stretch;justify-content:center;gap:1.1rem;flex-wrap:nowrap}
+  .node{flex:1;min-width:0;background:var(--card);border:1px solid var(--card-edge);border-radius:14px;
+    padding:1rem 1rem;text-align:center;position:relative;transition:.3s}
+  .node:hover{border-color:rgba(255,255,255,.25);background:rgba(255,255,255,.06);transform:translateY(-3px)}
+  .node i{font-size:1.3rem;margin-bottom:.5rem;display:block}
+  .node .nt{font-weight:700;font-size:.92rem;letter-spacing:-.01em}
+  .node .ns{font-size:.72rem;color:var(--muted);margin-top:.2rem;line-height:1.4}
+  .node .badge{position:absolute;top:-9px;right:10px;font-family:'JetBrains Mono',monospace;font-size:.6rem;
+    padding:.15rem .5rem;border-radius:6px;background:#0d1426;border:1px solid var(--card-edge);color:var(--cyan)}
+  .layer-label{font-family:'JetBrains Mono',monospace;font-size:.68rem;letter-spacing:.1em;color:var(--faint);
+    text-transform:uppercase;align-self:center;writing-mode:vertical-rl;transform:rotate(180deg);padding:0 .4rem}
+  .flowline{height:30px;display:flex;align-items:center;justify-content:center;position:relative}
+  .flowline::before{content:"";width:2px;height:100%;background:linear-gradient(var(--cyan),var(--violet));opacity:.5}
+  .flowline i{position:absolute;color:var(--violet);font-size:.7rem;background:var(--bg);padding:2px}
+  .c-blue i{color:var(--blue)} .c-cyan i{color:var(--cyan)} .c-violet i{color:var(--violet)}
+  .c-green i{color:var(--green)} .c-amber i{color:var(--amber)} .c-pink i{color:var(--pink)}
+
+  /* lifecycle */
+  .lifeflow{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-top:1.5rem}
+  .lstep{display:flex;flex-direction:column;align-items:center;gap:.5rem;flex:1;min-width:84px}
+  .lstep .b{width:100%;padding:.7rem .4rem;border-radius:11px;background:var(--card);border:1px solid var(--card-edge);
+    text-align:center;font-size:.78rem;font-weight:600;transition:.3s}
+  .lstep .b i{display:block;font-size:1rem;margin-bottom:.35rem;color:var(--cyan)}
+  .lstep:hover .b{background:rgba(34,211,238,.1);border-color:var(--cyan)}
+  .larrow{color:var(--faint);font-size:.8rem;flex:0 0 auto}
+  .lstep.fail .b i{color:var(--pink)} .lstep.conv .b i{color:var(--green)}
+
+  /* two-col layout */
+  .split{display:grid;grid-template-columns:1.05fr .95fr;gap:3rem;align-items:center;width:100%}
+  .feature-list{list-style:none;display:flex;flex-direction:column;gap:1.1rem}
+  .feature-list li{display:flex;gap:1rem;align-items:flex-start}
+  .feature-list .fi{flex:0 0 auto;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+    background:var(--grad-soft);border:1px solid var(--card-edge);font-size:.95rem}
+  .feature-list .ft{font-weight:600;font-size:1rem;margin-bottom:.2rem}
+  .feature-list .fd{font-size:.88rem;color:var(--muted);line-height:1.5}
+
+  /* code block */
+  .code{font-family:'JetBrains Mono',monospace;font-size:.82rem;background:#0a0f1e;border:1px solid var(--card-edge);
+    border-radius:14px;padding:1.3rem 1.5rem;line-height:1.7;color:#cbd5f5;position:relative;overflow:hidden}
+  .code .cm{color:#5C6A86} .code .kw{color:#c4b5fd} .code .st{color:#7dd3fc} .code .fn{color:#6ee7b7} .code .nm{color:#fbbf24}
+  .code-head{display:flex;gap:.5rem;margin-bottom:1rem}
+  .code-head span{width:11px;height:11px;border-radius:50%;background:#2a3550}
+  .code-head span:first-child{background:#ff5f57}.code-head span:nth-child(2){background:#febc2e}.code-head span:nth-child(3){background:#28c840}
+
+  /* stat row */
+  .stats{display:flex;gap:2.6rem;flex-wrap:wrap;margin-top:1.5rem}
+  .stat .num{font-size:2.4rem;font-weight:800;letter-spacing:-.03em;line-height:1}
+  .stat .lbl{font-size:.82rem;color:var(--muted);margin-top:.45rem}
+
+  /* tradeoff table */
+  .tradeoff{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem}
+  .to-card{background:var(--card);border:1px solid var(--card-edge);border-radius:16px;padding:1.4rem 1.5rem}
+  .to-card .h{display:flex;align-items:center;gap:.6rem;font-weight:700;margin-bottom:.9rem;font-size:1rem}
+  .to-card.now .h{color:var(--cyan)} .to-card.scale .h{color:var(--violet)}
+  .to-card ul{list-style:none;display:flex;flex-direction:column;gap:.7rem}
+  .to-card li{font-size:.86rem;color:var(--muted);line-height:1.45;display:flex;gap:.55rem}
+  .to-card li i{color:var(--faint);font-size:.7rem;margin-top:.35rem;flex:0 0 auto}
+
+  /* nav */
+  .nav{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:50;display:flex;align-items:center;gap:1rem;
+    background:rgba(10,15,30,.7);border:1px solid var(--card-edge);backdrop-filter:blur(14px);padding:.5rem .6rem;border-radius:999px}
+  .nav button{width:38px;height:38px;border-radius:50%;border:1px solid var(--card-edge);background:transparent;color:var(--ink);
+    cursor:pointer;font-size:.85rem;transition:.25s;display:grid;place-items:center}
+  .nav button:hover{background:var(--grad);color:#06101f;border-color:transparent}
+  .counter{font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--muted);min-width:54px;text-align:center}
+  .counter b{color:var(--ink)}
+  .progress{position:fixed;top:0;left:0;height:3px;background:var(--grad);z-index:60;transition:width .5s cubic-bezier(.2,.7,.2,1);box-shadow:0 0 16px var(--blue)}
+  .dots{position:fixed;right:26px;top:50%;transform:translateY(-50%);z-index:50;display:flex;flex-direction:column;gap:11px}
+  .dots button{width:9px;height:9px;border-radius:50%;border:none;background:rgba(255,255,255,.18);cursor:pointer;transition:.3s;padding:0}
+  .dots button.on{background:var(--grad);height:24px;border-radius:6px}
+  .hint{position:fixed;bottom:28px;right:28px;z-index:50;font-size:.74rem;color:var(--faint);font-family:'JetBrains Mono',monospace}
+  .slide-no{position:fixed;top:26px;right:30px;z-index:50;font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--faint)}
+  .brand-tag{position:fixed;top:24px;left:30px;z-index:50;display:flex;align-items:center;gap:.6rem;font-weight:600;font-size:.9rem}
+  .brand-tag .m{width:28px;height:28px;border-radius:8px;background:var(--grad);display:grid;place-items:center;color:#06101f;font-weight:900;font-size:.95rem}
+
+  .chips{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1.6rem}
+  .chip{font-family:'JetBrains Mono',monospace;font-size:.76rem;padding:.45rem .85rem;border-radius:9px;
+    background:var(--card);border:1px solid var(--card-edge);color:var(--muted)}
+  .chip b{color:var(--ink);font-weight:600}
+
+  .quote{font-size:clamp(1.4rem,2.6vw,2.2rem);font-weight:600;line-height:1.35;letter-spacing:-.02em;max-width:24ch}
+  @media (max-width:900px){.split,.tradeoff,.g3,.g4{grid-template-columns:1fr}.arch-row{flex-wrap:wrap}.dots{display:none}}
+</style>
+</head>
+<body>
+<div class="aurora"></div>
+<div class="grid-overlay"></div>
+<div class="progress" id="progress"></div>
+<div class="brand-tag"><span class="m">X</span> Xeno · Agentic Mini CRM</div>
+<div class="slide-no" id="slideNo">01</div>
+
+<div class="deck" id="deck">
+
+  <!-- 1 · TITLE -->
+  <section class="slide active">
+    <div class="title-wrap">
+      <div class="logo-row reveal" style="--i:0">
+        <div class="logo-mark">X</div>
+        <div class="logo-text">Xeno Engineering<br><span>Internship Assignment · 2026</span></div>
+      </div>
+      <div class="kicker reveal" style="--i:1"><span class="dot"></span> AI-Native Mini CRM for Reaching Shoppers</div>
+      <h1 class="reveal" style="--i:2">The Approval-Gated<br><span class="gradient">AI Campaign Agent</span></h1>
+      <p class="lead reveal" style="--i:3" style="margin-top:1.4rem">
+        A marketer describes a goal in plain English. The agent reads the shopper &amp; order data,
+        proposes a segment, channel and message — then waits for a human <b style="color:var(--ink)">approval</b> before
+        it sends through a real queue and tracks every delivery callback.
+      </p>
+      <div class="title-meta reveal" style="--i:4">
+        <div><div class="l">Role</div><div class="v">SDE · End-to-end build</div></div>
+        <div><div class="l">Stack</div><div class="v">Next.js · FastAPI · BullMQ</div></div>
+        <div><div class="l">Intelligence</div><div class="v">Claude · Embeddings RAG</div></div>
+        <div><div class="l">Pattern</div><div class="v">Two-service callback loop</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 · THE BET -->
+  <section class="slide">
+    <div class="section-head">
+      <div class="eyebrow reveal" style="--i:0">The product bet</div>
+      <h2 class="reveal" style="--i:1">I didn't build everything shallowly.<br>I built <span class="gradient">one opinionated thing</span> deeply.</h2>
+      <p class="lead reveal" style="--i:2">The brief rewards sharp scoping. So instead of a generic CRM with twenty half-features,
+      I committed to a single point of view: a <b style="color:var(--ink)">true AI agent</b> that takes a broad marketing goal and executes the campaign end-to-end — gated by human approval at the one moment that matters.</p>
+    </div>
+    <div class="grid g3">
+      <div class="card reveal" style="--i:3"><div class="ico c-cyan"><i class="fa-solid fa-bullseye"></i></div>
+        <h3>Goal in, plan out</h3><p>The marketer types intent. The agent returns a named campaign, a segment with reasoning, a recommended channel, and two message variants — not a blank form.</p></div>
+      <div class="card reveal" style="--i:4"><div class="ico c-violet"><i class="fa-solid fa-shield-halved"></i></div>
+        <h3>Approval is the guardrail</h3><p>The agent can draft but <b style="color:var(--ink)">cannot send</b>. A campaign must pass <span class="tag">draft → approved</span> by a human before a single message leaves. AI proposes, human disposes.</p></div>
+      <div class="card reveal" style="--i:5"><div class="ico c-green"><i class="fa-solid fa-wave-square"></i></div>
+        <h3>Real async lifecycle</h3><p>Sends flow through a real Redis/BullMQ queue to a separate stubbed channel service that calls back with delivered / opened / clicked / converted receipts.</p></div>
+    </div>
+    <div class="chips reveal" style="--i:6">
+      <span class="chip">Deliberately <b>NOT</b> a sales/support CRM</span>
+      <span class="chip">Deliberately <b>NOT</b> a real provider integration</span>
+      <span class="chip"><b>IS</b> a marketing &amp; engagement engine</span>
+    </div>
+  </section>
+
+  <!-- 3 · PRODUCT TOUR -->
+  <section class="slide">
+    <div class="section-head">
+      <div class="eyebrow reveal" style="--i:0">Functional demo · the cockpit</div>
+      <h2 class="reveal" style="--i:1">Five screens, one continuous flow</h2>
+    </div>
+    <div class="grid g4">
+      <div class="card reveal" style="--i:2"><div class="ico c-blue"><i class="fa-solid fa-gauge-high"></i></div>
+        <h3>Dashboard</h3><p>Seeded shoppers, orders &amp; revenue at a glance — plus a recommendation: "X shoppers lapsed 60+ days, ₹Y recoverable."</p></div>
+      <div class="card reveal" style="--i:3"><div class="ico c-cyan"><i class="fa-solid fa-users-viewfinder"></i></div>
+        <h3>Customers</h3><p>Per-shopper profile, purchase history and an AI-written summary suggesting the best next step.</p></div>
+      <div class="card reveal" style="--i:4"><div class="ico c-violet"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
+        <h3>New Agent Campaign</h3><p>Describe the goal → the agent returns a full plan with live audience size and editable message variants.</p></div>
+      <div class="card reveal" style="--i:5"><div class="ico c-green"><i class="fa-solid fa-chart-line"></i></div>
+        <h3>Performance</h3><p>Live funnel — sent, delivered, opened, read, clicked, converted — plus attributed revenue, updating as callbacks land.</p></div>
+    </div>
+    <div class="card reveal" style="--i:6" style="margin-top:1.3rem;background:var(--grad-soft)">
+      <p style="font-size:.95rem;color:var(--ink)">
+        <i class="fa-solid fa-play" style="color:var(--cyan);margin-right:.6rem"></i>
+        <b>Demo path:</b> Seed data → "Win back shoppers who haven't purchased in 60 days over WhatsApp or SMS" →
+        review plan → create draft → <b style="color:var(--cyan)">approve</b> → send → watch the funnel fill in real time.
+      </p>
+    </div>
+  </section>
+
+  <!-- 4 · ARCHITECTURE -->
+  <section class="slide">
+    <div class="section-head" style="margin-bottom:1.6rem">
+      <div class="eyebrow reveal" style="--i:0">Technical architecture</div>
+      <h2 class="reveal" style="--i:1">Three services, one durable source of truth</h2>
+    </div>
+    <div class="arch">
+      <div class="arch-row reveal" style="--i:2">
+        <div class="node c-blue"><span class="badge">Vercel</span><i class="fa-brands fa-react"></i><div class="nt">Next.js 15 Frontend</div><div class="ns">Campaign cockpit · App Router · RSC</div></div>
+        <div class="node c-violet"><i class="fa-solid fa-robot"></i><div class="nt">AI Agent Layer</div><div class="ns">Planner · sanitizer · tool-trace</div></div>
+      </div>
+      <div class="flowline reveal" style="--i:3"><i class="fa-solid fa-arrow-down"></i></div>
+      <div class="arch-row reveal" style="--i:4">
+        <div class="node c-cyan"><span class="badge">Render</span><i class="fa-solid fa-bolt"></i><div class="nt">FastAPI Backend</div><div class="ns">REST · approval gate · receipt ingest</div></div>
+        <div class="node c-violet"><i class="fa-solid fa-brain"></i><div class="nt">Claude + Embeddings</div><div class="ns">Plan generation · audience RAG</div></div>
+      </div>
+      <div class="flowline reveal" style="--i:5"><i class="fa-solid fa-arrow-down"></i></div>
+      <div class="arch-row reveal" style="--i:6">
+        <div class="node c-green"><span class="badge">AWS RDS</span><i class="fa-solid fa-database"></i><div class="nt">Postgres</div><div class="ns">Customers · orders · campaigns · events</div></div>
+        <div class="node c-amber"><span class="badge">Upstash</span><i class="fa-solid fa-layer-group"></i><div class="nt">Redis + BullMQ</div><div class="ns">Durable job queues · retries · backoff</div></div>
+        <div class="node c-pink"><i class="fa-solid fa-tower-broadcast"></i><div class="nt">Channel Worker</div><div class="ns">Stubbed /send · async receipts</div></div>
+      </div>
+    </div>
+    <p class="lead reveal" style="--i:7" style="margin-top:1.6rem;text-align:center;max-width:78ch;margin-left:auto;margin-right:auto;font-size:.95rem">
+      The dispatch loop is fully decoupled: the API never blocks on delivery. It enqueues, returns, and lets workers fan out — while receipts flow back through an idempotent ingestion endpoint.
+    </p>
+  </section>
+
+  <!-- 5 · STACK RATIONALE -->
+  <section class="slide">
+    <div class="section-head">
+      <div class="eyebrow reveal" style="--i:0">Why each choice · deliberate, not default</div>
+      <h2 class="reveal" style="--i:1">Every piece earns its place</h2>
+    </div>
+    <div class="grid g3">
+      <div class="card reveal" style="--i:2"><div class="ico c-blue"><i class="fa-brands fa-react"></i></div>
+        <h3>Next.js 15 + React 19</h3><p>Server Components mean the cockpit fetches data on the server and ships less JS. One-click Vercel deploy, file-based routing, and an ecosystem the AI SDK plugs straight into.</p><div class="tag" style="margin-top:.7rem">apps/web</div></div>
+      <div class="card reveal" style="--i:3"><div class="ico c-cyan"><i class="fa-solid fa-bolt"></i></div>
+        <h3>FastAPI + SQLAlchemy 2.0</h3><p>Typed Pydantic schemas give request validation for free, async I/O for the non-blocking send loop, and auto-generated OpenAPI docs reviewers can poke at <span class="tag">/docs</span>.</p><div class="tag" style="margin-top:.7rem">apps/api</div></div>
+      <div class="card reveal" style="--i:4"><div class="ico c-amber"><i class="fa-solid fa-layer-group"></i></div>
+        <h3>Node + BullMQ + Redis</h3><p>The brief is a queueing problem. BullMQ gives durable jobs, automatic retries with exponential backoff, and idempotent <span class="tag">jobId</span>s — the right tool for high-volume async dispatch.</p><div class="tag" style="margin-top:.7rem">apps/worker</div></div>
+      <div class="card reveal" style="--i:5"><div class="ico c-green"><i class="fa-solid fa-database"></i></div>
+        <h3>Postgres</h3><p>The durable source of truth. Relational data (customers→orders→communications→events) with a <span class="tag">UNIQUE(campaign,customer)</span> constraint that makes sends safely idempotent.</p><div class="tag" style="margin-top:.7rem">source of truth</div></div>
+      <div class="card reveal" style="--i:6"><div class="ico c-violet"><i class="fa-solid fa-brain"></i></div>
+        <h3>Claude (Anthropic-first)</h3><p>Strong structured-JSON output and instruction-following for the planner. Low temperature + a strict system prompt keep plans on-rails and within the allowed channel/rule vocabulary.</p><div class="tag" style="margin-top:.7rem">claude-opus-4-8</div></div>
+      <div class="card reveal" style="--i:7"><div class="ico c-pink"><i class="fa-solid fa-vector-square"></i></div>
+        <h3>OpenAI Embeddings</h3><p>Cosine-similarity retrieval surfaces the most relevant shoppers for a goal — lightweight RAG without a vector DB at this scale.</p><div class="tag" style="margin-top:.7rem">audience insights</div></div>
+    </div>
+    <p class="lead reveal" style="--i:8" style="margin-top:1.4rem;font-size:.92rem">
+      <i class="fa-solid fa-shield-heart" style="color:var(--green);margin-right:.5rem"></i>
+      Both AI providers are <b style="color:var(--ink)">optional</b>: with no API keys, a deterministic local planner runs so any reviewer can clone and run the whole app offline.
+    </p>
+  </section>
+
+  <!-- 6 · CHANNEL LIFECYCLE -->
+  <section class="slide">
+    <div class="section-head" style="margin-bottom:1.2rem">
+      <div class="eyebrow reveal" style="--i:0">The channel service · the part that matters most</div>
+      <h2 class="reveal" style="--i:1">Modeling the full communication lifecycle</h2>
+      <p class="lead reveal" style="--i:2" style="font-size:.95rem">A separate stubbed service simulates a real provider. It accepts a send, then <b style="color:var(--ink)">asynchronously calls back</b> with each lifecycle event. Some messages fail. Some convert. Receipts can arrive out of order — and the CRM stays correct.</p>
+    </div>
+    <div class="lifeflow reveal" style="--i:3">
+      <div class="lstep"><div class="b"><i class="fa-solid fa-paper-plane"></i>accepted</div></div>
+      <div class="larrow"><i class="fa-solid fa-chevron-right"></i></div>
+      <div class="lstep"><div class="b"><i class="fa-solid fa-share"></i>sent</div></div>
+      <div class="larrow"><i class="fa-solid fa-chevron-right"></i></div>
+      <div class="lstep"><div class="b"><i class="fa-solid fa-circle-check"></i>delivered</div></div>
+      <div class="larrow"><i class="fa-solid fa-chevron-right"></i></div>
+      <div class="lstep"><div class="b"><i class="fa-solid fa-envelope-open"></i>opened</div></div>
+      <div class="larrow"><i class="fa-solid fa-chevron-right"></i></div>
+      <div class="lstep"><div class="b"><i class="fa-solid fa-book-open"></i>read</div></div>
+      <div class="larrow"><i class="fa-solid fa-chevron-right"></i></div>
+      <div class="lstep conv"><div class="b"><i class="fa-solid fa-hand-pointer"></i>clicked</div></div>
+      <div class="larrow"><i class="fa-solid fa-chevron-right"></i></div>
+      <div class="lstep conv"><div class="b"><i class="fa-solid fa-bag-shopping"></i>converted</div></div>
+      <div class="larrow" style="color:var(--pink)"><i class="fa-solid fa-code-branch"></i></div>
+      <div class="lstep fail"><div class="b"><i class="fa-solid fa-circle-xmark"></i>failed</div></div>
+    </div>
+    <div class="grid g3 reveal" style="--i:4" style="margin-top:1.8rem">
+      <div class="card"><div class="ico c-cyan"><i class="fa-solid fa-fingerprint"></i></div>
+        <h3>Idempotent ingestion</h3><p>Every receipt carries a unique <span class="tag">event_id</span>. Duplicates are detected and dropped — retries and at-least-once delivery never double-count.</p></div>
+      <div class="card"><div class="ico c-violet"><i class="fa-solid fa-arrow-down-1-9"></i></div>
+        <h3>Out-of-order safe</h3><p>A status <span class="tag">rank</span> map means state only ever advances. A late "delivered" can't overwrite a "clicked". Highest lifecycle state wins.</p></div>
+      <div class="card"><div class="ico c-amber"><i class="fa-solid fa-rotate"></i></div>
+        <h3>Retries + reconciliation</h3><p>Jobs retry with exponential backoff; <span class="tag">failed</span> is terminal. When all messages reach a terminal state, the campaign auto-completes.</p></div>
+    </div>
+  </section>
+
+  <!-- 7 · IDEMPOTENCY CODE -->
+  <section class="slide">
+    <div class="split">
+      <div>
+        <div class="eyebrow reveal" style="--i:0">Code walkthrough · the critical 20 lines</div>
+        <h2 class="reveal" style="--i:1">How a receipt safely updates state</h2>
+        <ul class="feature-list reveal" style="--i:2" style="margin-top:1.6rem">
+          <li><div class="fi c-cyan"><i class="fa-solid fa-1"></i></div><div><div class="ft">Dedupe by event_id</div><div class="fd">First line of defense — a unique index makes replays a no-op.</div></div></li>
+          <li><div class="fi c-violet"><i class="fa-solid fa-2"></i></div><div><div class="ft">Validate the triple</div><div class="fd">Communication, campaign and customer must all match, or the receipt is rejected.</div></div></li>
+          <li><div class="fi c-green"><i class="fa-solid fa-3"></i></div><div><div class="ft">Monotonic state via rank</div><div class="fd">Only advance status if the new rank ≥ current — except <span class="tag">failed</span>, which always wins.</div></div></li>
+          <li><div class="fi c-amber"><i class="fa-solid fa-4"></i></div><div><div class="ft">Attribute revenue on convert</div><div class="fd">Conversions add <span class="tag">order_value</span> to attributed revenue, then reconcile the campaign.</div></div></li>
+        </ul>
+      </div>
+      <div class="code reveal" style="--i:3">
+        <div class="code-head"><span></span><span></span><span></span></div>
+<pre><span class="cm"># services.py · apply_receipt()</span>
+<span class="kw">if</span> existing_event(<span class="nm">event_id</span>):
+    <span class="kw">return</span> {<span class="st">"accepted"</span>: <span class="kw">False</span>,
+            <span class="st">"reason"</span>: <span class="st">"duplicate"</span>}
+
+<span class="cm"># monotonic lifecycle — never go backwards</span>
+cur  = <span class="fn">STATUS_RANK</span>[comm.status]
+next = <span class="fn">STATUS_RANK</span>[receipt.status]
+
+<span class="kw">if</span> receipt.status == <span class="st">"failed"</span> \
+   <span class="kw">or</span> next &gt;= cur:
+    comm.status = receipt.status
+
+<span class="kw">if</span> receipt.status == <span class="st">"converted"</span>:
+    comm.attributed_revenue += \
+        receipt.metadata[<span class="st">"order_value"</span>]
+
+<span class="fn">reconcile_campaign_status</span>(db, comm.campaign_id)
+db.<span class="fn">commit</span>()</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8 · AI-NATIVE PRODUCT -->
+  <section class="slide">
+    <div class="section-head">
+      <div class="eyebrow reveal" style="--i:0">AI woven in, not bolted on</div>
+      <h2 class="reveal" style="--i:1">Intelligence at <span class="gradient">three layers</span></h2>
+    </div>
+    <div class="grid g3">
+      <div class="card reveal" style="--i:2"><div class="ico c-violet"><i class="fa-solid fa-diagram-project"></i></div>
+        <h3>1 · Agentic planning</h3><p>Claude turns a free-text goal into a structured plan: campaign name, segment rules + reasoning, channel, and message variants. Every output is <b style="color:var(--ink)">sanitized</b> against an allow-list before it touches the DB.</p></div>
+      <div class="card reveal" style="--i:3"><div class="ico c-pink"><i class="fa-solid fa-magnifying-glass-chart"></i></div>
+        <h3>2 · Retrieval (RAG)</h3><p>Each shopper becomes a document; embeddings rank who best matches the goal by cosine similarity — grounding the plan in real audience data, not vibes.</p></div>
+      <div class="card reveal" style="--i:4"><div class="ico c-cyan"><i class="fa-solid fa-user-pen"></i></div>
+        <h3>3 · Per-shopper summaries</h3><p>Each customer profile gets an AI "best next step" line, so the marketer sees intelligence everywhere, not just in the agent.</p></div>
+    </div>
+    <div class="grid g3 reveal" style="--i:5" style="margin-top:1.2rem">
+      <div class="card" style="background:var(--grad-soft)"><div class="ico c-green"><i class="fa-solid fa-list-check"></i></div>
+        <h3>Transparent tool-trace</h3><p>Every run persists its tool calls to <span class="tag">agent_runs</span> — get_customer_summary → retrieve_insights → preview_segment → draft_variants. The agent's reasoning is auditable.</p></div>
+      <div class="card" style="background:var(--grad-soft)"><div class="ico c-amber"><i class="fa-solid fa-network-wired"></i></div>
+        <h3>Graceful degradation</h3><p>If the model returns bad JSON or a key is missing, a deterministic planner takes over and the model status is recorded — the product never hard-fails.</p></div>
+      <div class="card" style="background:var(--grad-soft)"><div class="ico c-blue"><i class="fa-solid fa-sliders"></i></div>
+        <h3>Model selector</h3><p>A settings UI lets you pick across Claude, GPT and Gemini families — the architecture treats the model as a swappable component.</p></div>
+    </div>
+  </section>
+
+  <!-- 9 · SCALE TRADEOFFS -->
+  <section class="slide">
+    <div class="section-head">
+      <div class="eyebrow reveal" style="--i:0">System design · explicit tradeoffs</div>
+      <h2 class="reveal" style="--i:1">"I'd do X at scale, I did Y for this scope"</h2>
+    </div>
+    <div class="tradeoff">
+      <div class="to-card now reveal" style="--i:2">
+        <div class="h"><i class="fa-solid fa-circle-check"></i> What I built for this scope</div>
+        <ul>
+          <li><i class="fa-solid fa-diamond"></i> Synchronous fan-out in the send loop — simple, readable, fine for demo-sized audiences.</li>
+          <li><i class="fa-solid fa-diamond"></i> Channel callbacks fired via in-process timers to simulate async provider latency.</li>
+          <li><i class="fa-solid fa-diamond"></i> In-app segment evaluation in Python; SQL audience query in the worker.</li>
+          <li><i class="fa-solid fa-diamond"></i> Embeddings recomputed per run — no vector store, negligible cost at this size.</li>
+        </ul>
+      </div>
+      <div class="to-card scale reveal" style="--i:3">
+        <div class="h"><i class="fa-solid fa-arrow-trend-up"></i> What I'd change at real volume</div>
+        <ul>
+          <li><i class="fa-solid fa-diamond"></i> Push the per-recipient fan-out fully into BullMQ jobs with concurrency + rate limits per channel.</li>
+          <li><i class="fa-solid fa-diamond"></i> Move callbacks to a dedicated channel queue with a dead-letter queue for poison receipts.</li>
+          <li><i class="fa-solid fa-diamond"></i> Materialize segments &amp; precompute funnel counts to avoid recomputing on every read.</li>
+          <li><i class="fa-solid fa-diamond"></i> Persist embeddings in pgvector; add a webhook signature + idempotency key TTL.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="stats reveal" style="--i:4">
+      <div class="stat"><div class="num gradient">3</div><div class="lbl">decoupled services</div></div>
+      <div class="stat"><div class="num gradient">9</div><div class="lbl">lifecycle states modeled</div></div>
+      <div class="stat"><div class="num gradient">2×</div><div class="lbl">idempotency guards (job + event)</div></div>
+      <div class="stat"><div class="num gradient">100%</div><div class="lbl">runs offline, no API keys</div></div>
+    </div>
+  </section>
+
+  <!-- 10 · AI-NATIVE WORKFLOW -->
+  <section class="slide">
+    <div class="split">
+      <div>
+        <div class="eyebrow reveal" style="--i:0">How I built it</div>
+        <h2 class="reveal" style="--i:1">An AI-native<br>dev workflow</h2>
+        <p class="lead reveal" style="--i:2" style="margin-top:1.2rem;font-size:.98rem">I directed the build the same way the product directs Claude: clear intent, tight review, and human approval at every gate.</p>
+        <div class="chips reveal" style="--i:3">
+          <span class="chip"><b>Claude Code</b> as pair</span>
+          <span class="chip">spec → scaffold → review</span>
+          <span class="chip">tests as the contract</span>
+        </div>
+      </div>
+      <ul class="feature-list reveal" style="--i:4">
+        <li><div class="fi c-violet"><i class="fa-solid fa-pen-ruler"></i></div><div><div class="ft">Architect first, generate second</div><div class="fd">I defined the service boundaries and data model, then used AI to fill in the implementation against that shape.</div></div></li>
+        <li><div class="fi c-cyan"><i class="fa-solid fa-magnifying-glass"></i></div><div><div class="ft">Review every diff</div><div class="fd">AI output was read, questioned and refactored — never merged blind. I can defend every line.</div></div></li>
+        <li><div class="fi c-green"><i class="fa-solid fa-vial-circle-check"></i></div><div><div class="ft">Tests pin behavior</div><div class="fd">API and worker test suites (pytest + bun) lock the idempotency and lifecycle rules so AI edits can't silently break them.</div></div></li>
+        <li><div class="fi c-amber"><i class="fa-solid fa-recycle"></i></div><div><div class="ft">Tight feedback loops</div><div class="fd">Docker Compose spins up the whole stack locally — change, run, observe, iterate in minutes.</div></div></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 11 · CLOSE -->
+  <section class="slide">
+    <div class="title-wrap" style="text-align:center;margin:0 auto">
+      <div class="pill reveal" style="--i:0"><i class="fa-solid fa-sparkles" style="color:var(--cyan)"></i> Thank you for reviewing</div>
+      <h1 class="reveal" style="--i:1" style="margin-top:1.6rem">AI proposes.<br><span class="gradient">The human approves.</span><br>The queue delivers.</h1>
+      <p class="lead reveal" style="--i:2" style="margin:1.6rem auto 0">One opinionated product bet, built end-to-end — with the system-design rigor in exactly the place the brief said matters most: the callback-driven channel loop.</p>
+      <div class="title-meta reveal" style="--i:3" style="justify-content:center">
+        <div><div class="l"><i class="fa-solid fa-globe"></i> Live product</div><div class="v">Vercel · Render · RDS · Upstash</div></div>
+        <div><div class="l"><i class="fa-brands fa-github"></i> Repository</div><div class="v">Full source · tests · compose</div></div>
+        <div><div class="l"><i class="fa-solid fa-film"></i> Walkthrough</div><div class="v">This deck · 5–6 min</div></div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- nav -->
+<div class="dots" id="dots"></div>
+<div class="nav">
+  <button id="prev" aria-label="Previous"><i class="fa-solid fa-arrow-left"></i></button>
+  <div class="counter"><b id="cur">01</b> / <span id="total">11</span></div>
+  <button id="next" aria-label="Next"><i class="fa-solid fa-arrow-right"></i></button>
+</div>
+<div class="hint">← → · space · F fullscreen</div>
+
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  const dots=document.getElementById('dots');
+  const progress=document.getElementById('progress');
+  let i=0;
+  slides.forEach((_,n)=>{const b=document.createElement('button');b.onclick=()=>go(n);dots.appendChild(b);});
+  const dotEls=[...dots.children];
+  document.getElementById('total').textContent=String(slides.length).padStart(2,'0');
+
+  function go(n){
+    i=Math.max(0,Math.min(slides.length-1,n));
+    slides.forEach((s,k)=>s.classList.toggle('active',k===i));
+    dotEls.forEach((d,k)=>d.classList.toggle('on',k===i));
+    progress.style.width=((i)/(slides.length-1)*100)+'%';
+    const pad=String(i+1).padStart(2,'0');
+    document.getElementById('cur').textContent=pad;
+    document.getElementById('slideNo').textContent=pad;
+  }
+  document.getElementById('next').onclick=()=>go(i+1);
+  document.getElementById('prev').onclick=()=>go(i-1);
+  document.addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){e.preventDefault();go(i+1);}
+    if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();go(i-1);}
+    if(e.key==='Home')go(0); if(e.key==='End')go(slides.length-1);
+    if(e.key.toLowerCase()==='f'){if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen();}
+  });
+  let sx=0;
+  document.addEventListener('touchstart',e=>sx=e.touches[0].clientX,{passive:true});
+  document.addEventListener('touchend',e=>{const d=e.changedTouches[0].clientX-sx;if(Math.abs(d)>60)go(i+(d<0?1:-1));},{passive:true});
+  go(0);
+</script>
+</body>
+</html>
