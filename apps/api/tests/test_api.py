@@ -227,6 +227,14 @@ def test_campaign_performance_counts_converted_as_purchased():
     assert performance.json()["counts"]["purchased"] == 1
 
 
+def test_seeded_draft_campaign_insights_include_audience_notes():
+    response = client.get("/campaigns/cmp_seed_005/insights")
+    assert response.status_code == 200
+    insights = response.json()["insights"]
+    assert any("Delhi is the largest reachable city" in insight for insight in insights)
+    assert any("Inactivity split" in insight for insight in insights)
+
+
 def test_invalid_segment_rules_are_rejected():
     response = client.post("/segments/preview", json={"rules": {"channel": "push", "min_last_order_days_ago": 10}})
     assert response.status_code == 422
