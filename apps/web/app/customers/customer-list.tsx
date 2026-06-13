@@ -28,10 +28,9 @@ export function CustomerList({ customers }: { customers: Customer[] }) {
     <section className="grid">
       <label>
         Search customers
-        <div style={{ position: "relative" }}>
-          <Search size={18} style={{ color: "var(--muted)", left: 12, position: "absolute", top: 12 }} />
+        <div className="search-field">
+          <Search size={18} />
           <input
-            style={{ paddingLeft: 40 }}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Name, email, city, or tag"

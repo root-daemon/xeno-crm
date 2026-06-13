@@ -112,7 +112,7 @@ export function SegmentBuilder({ initialSegments }: { initialSegments: Segment[]
             Last order before
             <input type="number" value={rules.max_last_order_days_ago ?? ""} onChange={(event) => updateRule("max_last_order_days_ago", numberOrBlank(event.target.value))} />
           </label>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div className="actions">
             <button className="button secondary" onClick={() => preview()}>Preview</button>
             <button className="button" onClick={saveSegment}><Save size={18} />Save</button>
           </div>
@@ -141,7 +141,7 @@ export function SegmentBuilder({ initialSegments }: { initialSegments: Segment[]
         </div>
       </section>
 
-      <section className="panel" style={{ gridColumn: "1 / -1" }}>
+      <section className="panel full-span">
         <h2>Saved Segments</h2>
         <div className="grid three">
           {segments.length ? segments.map((segment) => (

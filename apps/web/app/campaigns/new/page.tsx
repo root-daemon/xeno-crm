@@ -12,7 +12,7 @@ export default async function NewCampaignPage({ searchParams }: { searchParams: 
         </div>
       </div>
       <AgentCampaignForm initialGoal={goal} />
-      <div style={{ marginTop: 14 }}>
+      <div className="section-gap">
         <ManualCampaignForm />
       </div>
     </>

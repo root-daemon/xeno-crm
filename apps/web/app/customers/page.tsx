@@ -2,7 +2,13 @@ import { api, Customer } from "../../lib/api";
 import { CustomerList } from "./customer-list";
 
 export default async function CustomersPage() {
-  const customers = await api<Customer[]>("/customers");
+  let customers: Customer[];
+  try {
+    customers = await api<Customer[]>("/customers");
+  } catch {
+    customers = [];
+  }
+
   return (
     <>
       <div className="topline">

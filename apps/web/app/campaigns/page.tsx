@@ -2,7 +2,13 @@ import Link from "next/link";
 import { api, Campaign } from "../../lib/api";
 
 export default async function CampaignsPage() {
-  const campaigns = await api<Campaign[]>("/campaigns");
+  let campaigns: Campaign[];
+  try {
+    campaigns = await api<Campaign[]>("/campaigns");
+  } catch {
+    campaigns = [];
+  }
+
   return (
     <>
       <div className="topline">
@@ -12,13 +18,13 @@ export default async function CampaignsPage() {
         </div>
         <Link className="button" href="/campaigns/new">New Agent Campaign</Link>
       </div>
-      <section className="grid">
-        {campaigns.map((campaign) => (
+      <section className="grid fade-stack">
+        {campaigns.length ? campaigns.map((campaign) => (
           <Link className="row" href={`/campaigns/${campaign.id}`} key={campaign.id}>
             <strong>{campaign.name}</strong>
             <p className="muted">{campaign.status} · {campaign.channel.toUpperCase()} · {campaign.goal}</p>
           </Link>
-        ))}
+        )) : <p className="muted">No campaigns yet. Create one from the AI Agent page.</p>}
       </section>
     </>
   );

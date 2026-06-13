@@ -17,16 +17,20 @@ type PlanResponse = {
   };
 };
 
+const REQUEST_TIMEOUT_MS = 5000;
+
 export function AgentCampaignForm({ initialGoal }: { initialGoal?: string }) {
   const [goal, setGoal] = useState(initialGoal || "Win back shoppers who have not purchased in 60 days with a personalized WhatsApp or SMS offer.");
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("");
+  const [isWorking, setIsWorking] = useState(false);
 
   async function post<T>(path: string, body?: unknown): Promise<T> {
     const response = await fetch(`${CLIENT_API_BASE}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       body: body ? JSON.stringify(body) : undefined
     });
     if (!response.ok) throw new Error(`${path} failed`);
@@ -34,33 +38,56 @@ export function AgentCampaignForm({ initialGoal }: { initialGoal?: string }) {
   }
 
   async function generatePlan() {
+    setIsWorking(true);
     setStatus("Thinking through audience, channel, and message...");
-    const result = await post<PlanResponse>("/agent/campaign-plan", { goal });
-    setPlan(result);
-    setCampaignId(null);
-    setStatus("Plan ready for review.");
+    try {
+      const result = await post<PlanResponse>("/agent/campaign-plan", { goal });
+      setPlan(result);
+      setCampaignId(null);
+      setStatus("Plan ready for review.");
+    } catch {
+      setStatus("Unable to generate a plan. Check the API and try again.");
+    } finally {
+      setIsWorking(false);
+    }
   }
 
   async function createDraft() {
     if (!plan) return;
-    const campaign = await post<{ id: string }>("/campaigns", {
-      agent_run_id: plan.agent_run_id,
-      name: plan.plan.campaign_name,
-      goal: plan.plan.goal,
-      channel: plan.plan.recommended_channel,
-      segment_rules: plan.plan.recommended_segment.rules,
-      message_template: plan.plan.message_variants[0].template,
-      approved_plan: plan.plan
-    });
-    setCampaignId(campaign.id);
-    setStatus("Draft created. Approval is required before sending.");
+    setIsWorking(true);
+    setStatus("Creating draft campaign...");
+    try {
+      const campaign = await post<{ id: string }>("/campaigns", {
+        agent_run_id: plan.agent_run_id,
+        name: plan.plan.campaign_name,
+        goal: plan.plan.goal,
+        channel: plan.plan.recommended_channel,
+        segment_rules: plan.plan.recommended_segment.rules,
+        message_template: plan.plan.message_variants[0].template,
+        approved_plan: plan.plan
+      });
+      setCampaignId(campaign.id);
+      setStatus("Draft created. Approval is required before sending.");
+    } catch {
+      setStatus("Unable to create the draft. Check the API and try again.");
+    } finally {
+      setIsWorking(false);
+    }
   }
 
   async function approveAndSend() {
     if (!campaignId) return;
-    await post(`/campaigns/${campaignId}/approve`);
-    await post(`/campaigns/${campaignId}/send`);
-    setStatus("Approved and queued in BullMQ. Open the campaign page to watch callbacks.");
+    setIsWorking(true);
+    setStatus("Approving and queueing sends...");
+    try {
+      await post(`/campaigns/${campaignId}/approve`);
+      await post(`/campaigns/${campaignId}/send`);
+      setStatus("Approved and queued in BullMQ. Open the campaign page to watch callbacks.");
+    } catch {
+      setStatus("Unable to approve and send. Check the API and try again.");
+    } finally {
+      setIsWorking(false);
+    }
   }
 
   return (
@@ -70,13 +97,13 @@ export function AgentCampaignForm({ initialGoal }: { initialGoal?: string }) {
           Campaign goal
           <textarea value={goal} onChange={(event) => setGoal(event.target.value)} />
         </label>
-        <button className="button" onClick={generatePlan}><Sparkles size={18} />Generate Agent Plan</button>
-        <p className="muted">{status}</p>
+        <button className="button" disabled={isWorking || !goal.trim()} onClick={generatePlan}><Sparkles size={18} />{isWorking ? "Working..." : "Generate Agent Plan"}</button>
+        <p className="muted status-line">{status}</p>
       </section>
       <section className="panel">
         <h2>Agent Recommendation</h2>
         {plan ? (
-          <div className="grid">
+          <div className="grid fade-stack">
             <div className="row">
               <strong>{plan.plan.campaign_name}</strong>
               <p className="muted">{plan.plan.recommended_channel.toUpperCase()} · {plan.plan.expected_audience_size} shoppers</p>
@@ -87,8 +114,8 @@ export function AgentCampaignForm({ initialGoal }: { initialGoal?: string }) {
               <p>{plan.plan.message_variants[0].template}</p>
             </div>
             <div className="chips">{plan.plan.risk_notes.map((note) => <span className="chip" key={note}>{note}</span>)}</div>
-            <button className="button secondary" onClick={createDraft}><CheckCircle size={18} />Create Draft</button>
-            <button className="button" disabled={!campaignId} onClick={approveAndSend}><Send size={18} />Approve & Send</button>
+            <button className="button secondary" disabled={isWorking} onClick={createDraft}><CheckCircle size={18} />Create Draft</button>
+            <button className="button" disabled={!campaignId || isWorking} onClick={approveAndSend}><Send size={18} />Approve & Send</button>
             {campaignId ? <a className="button secondary" href={`/campaigns/${campaignId}`}>Open Campaign</a> : null}
           </div>
         ) : <p className="muted">Generate a plan to see the approval-gated recommendation.</p>}

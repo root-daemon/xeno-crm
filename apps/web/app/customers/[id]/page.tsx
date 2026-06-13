@@ -25,7 +25,7 @@ export default async function CustomerProfilePage({ params }: { params: Promise<
         <Metric label="Tier" value={customer.loyalty_tier} />
       </section>
 
-      <div className="grid two" style={{ marginTop: 14 }}>
+      <div className="grid two section-gap">
         <section className="panel">
           <h2>AI Customer Summary</h2>
           <p>{customer.ai_summary}</p>
@@ -44,7 +44,7 @@ export default async function CustomerProfilePage({ params }: { params: Promise<
         </section>
       </div>
 
-      <section className="panel" style={{ marginTop: 14 }}>
+      <section className="panel section-gap">
         <h2>Purchase History</h2>
         <div className="split-list">
           {orders.length ? orders.map((order) => (

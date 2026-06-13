@@ -1,5 +1,6 @@
 export const API_BASE = process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 export const CLIENT_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const API_TIMEOUT_MS = 2500;
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -8,6 +9,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       "content-type": "application/json",
       ...(init?.headers ?? {})
     },
+    signal: init?.signal ?? AbortSignal.timeout(API_TIMEOUT_MS),
     cache: "no-store"
   });
   if (!response.ok) {

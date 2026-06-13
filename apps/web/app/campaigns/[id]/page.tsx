@@ -23,7 +23,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
           <p className="muted">{performance.campaign.status} · {performance.campaign.channel.toUpperCase()} · {performance.campaign.goal}</p>
         </div>
       </div>
-      <section className="grid four">
+      <section className="grid four fade-stack">
         <Metric label="Audience" value={performance.audience_size} />
         <Metric label="Sent" value={performance.counts.sent ?? 0} />
         <Metric label="Delivered" value={performance.counts.delivered ?? 0} />
@@ -33,7 +33,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
         <Metric label="Failed" value={performance.counts.failed ?? 0} />
         <Metric label="Revenue" value={money.format(performance.revenue)} />
       </section>
-      <div className="grid two" style={{ marginTop: 14 }}>
+      <div className="grid two section-gap">
         <section className="panel">
           <h2>Funnel View</h2>
           <div className="funnel">

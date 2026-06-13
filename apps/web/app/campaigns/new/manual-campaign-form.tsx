@@ -107,7 +107,7 @@ export function ManualCampaignForm() {
         Message
         <textarea value={message} onChange={(event) => setMessage(event.target.value)} />
       </label>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      <div className="actions">
         <button className="button" onClick={createDraft}><CheckCircle size={18} />Create Draft</button>
         {campaign ? <a className="button secondary" href={`/campaigns/${campaign.id}`}>Open Draft</a> : null}
       </div>
