@@ -14,6 +14,13 @@ except ImportError:  # pragma: no cover - dependency is installed in normal runt
     OpenAI = None  # type: ignore
 
 ALLOWED_CHANNELS = {"whatsapp", "sms", "email", "rcs"}
+DEFAULT_MODEL_ID = "google/gemini-2.5-flash"
+ALLOWED_MODEL_IDS = {
+    "google/gemini-2.5-flash",
+    "google/gemini-2.0-flash-001",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "anthropic/claude-3.5-haiku",
+}
 ALLOWED_RULE_KEYS = {
     "channel",
     "city",
@@ -25,7 +32,16 @@ ALLOWED_RULE_KEYS = {
 }
 
 
-def build_campaign_plan(db: Session, goal: str) -> dict[str, Any]:
+def resolve_model_id(requested_model: str | None = None) -> str:
+    if requested_model in ALLOWED_MODEL_IDS:
+        return requested_model
+    if settings.openrouter_model in ALLOWED_MODEL_IDS:
+        return settings.openrouter_model
+    return DEFAULT_MODEL_ID
+
+
+def build_campaign_plan(db: Session, goal: str, requested_model: str | None = None) -> dict[str, Any]:
+    model_id = resolve_model_id(requested_model)
     rows = customer_rows(db)
     tool_calls: list[dict[str, Any]] = [
         {"tool": "get_customer_summary", "result": customer_summary(rows)},
@@ -39,19 +55,19 @@ def build_campaign_plan(db: Session, goal: str) -> dict[str, Any]:
         return fallback_plan
 
     try:
-        ai_payload = call_openrouter_plan(goal, rows, insights)
-        plan = normalize_plan(db, goal, ai_payload, fallback_plan)
-        plan["model"] = settings.openrouter_model
+        ai_payload = call_openrouter_plan(goal, rows, insights, model_id)
+        plan = normalize_plan(db, goal, ai_payload, fallback_plan, model_id)
+        plan["model"] = model_id
         plan["tool_calls"] = tool_calls + [
-            {"tool": "openrouter_campaign_planner", "result": {"status": "validated"}},
+            {"tool": "openrouter_campaign_planner", "model": model_id, "result": {"status": "validated"}},
             *plan["tool_calls"],
         ]
         plan["raw_model_response"] = ai_payload
         return plan
     except Exception as exc:
-        fallback_plan["model"] = f"{settings.openrouter_model}-fallback"
+        fallback_plan["model"] = f"{model_id}-fallback"
         fallback_plan["tool_calls"] = tool_calls + [
-            {"tool": "openrouter_campaign_planner", "result": {"status": "failed", "error": str(exc)}},
+            {"tool": "openrouter_campaign_planner", "model": model_id, "result": {"status": "failed", "error": str(exc)}},
             *fallback_plan["tool_calls"],
         ]
         fallback_plan["validation_errors"] = [str(exc)]
@@ -124,13 +140,13 @@ def retrieve_audience_insights(goal: str, rows: list[dict[str, Any]], tool_calls
     return insights
 
 
-def call_openrouter_plan(goal: str, rows: list[dict[str, Any]], insights: list[dict[str, Any]]) -> dict[str, Any]:
+def call_openrouter_plan(goal: str, rows: list[dict[str, Any]], insights: list[dict[str, Any]], model_id: str) -> dict[str, Any]:
     client = OpenAI(  # type: ignore[operator]
         api_key=settings.openrouter_api_key,
         base_url=settings.openrouter_base_url,
     )
     response = client.chat.completions.create(
-        model=settings.openrouter_model,
+        model=model_id,
         max_tokens=1200,
         temperature=0.2,
         response_format={"type": "json_object"},
@@ -167,7 +183,7 @@ def call_openrouter_plan(goal: str, rows: list[dict[str, Any]], insights: list[d
     return json.loads(text)
 
 
-def normalize_plan(db: Session, goal: str, payload: dict[str, Any], fallback_plan: dict[str, Any]) -> dict[str, Any]:
+def normalize_plan(db: Session, goal: str, payload: dict[str, Any], fallback_plan: dict[str, Any], model_id: str) -> dict[str, Any]:
     rules = sanitize_rules(payload.get("recommended_segment", {}).get("rules") or {})
     channel = payload.get("recommended_channel") or rules.get("channel") or fallback_plan["recommended_channel"]
     if channel not in ALLOWED_CHANNELS:
@@ -191,7 +207,7 @@ def normalize_plan(db: Session, goal: str, payload: dict[str, Any], fallback_pla
         "audience_insights": fallback_plan.get("audience_insights", []),
         "expected_audience_size": len(audience),
         "requires_approval": True,
-        "model": settings.openrouter_model,
+        "model": model_id,
         "tool_calls": [
             {"tool": "preview_segment", "args": rules, "result": {"audience_size": len(audience)}},
             {"tool": "draft_message_variants", "result": {"variants": len(variants)}},
@@ -283,5 +299,4 @@ def count_by(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
         value = str(row[key])
         counts[value] = counts.get(value, 0) + 1
     return counts
-
 

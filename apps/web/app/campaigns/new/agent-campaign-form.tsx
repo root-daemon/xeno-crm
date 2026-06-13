@@ -41,6 +41,7 @@ export function AgentCampaignForm({ initialGoal }: { initialGoal?: string }) {
   );
   const [modelId, setModelId] = useState(DEFAULT_MODEL_ID);
   const [plan, setPlan] = useState<PlanResponse | null>(null);
+  const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("");
   const [isWorking, setIsWorking] = useState(false);
@@ -62,7 +63,8 @@ export function AgentCampaignForm({ initialGoal }: { initialGoal?: string }) {
     try {
       const result = await post<PlanResponse>("/api/agent/campaign-plan", { goal, model: modelId });
       setPlan(result);
-      setStatus("Plan ready for review.");
+      setSelectedVariantIndex(0);
+      setStatus("Plan ready. Review the agent decision and approve when ready.");
     } catch (err) {
       setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -75,14 +77,15 @@ export function AgentCampaignForm({ initialGoal }: { initialGoal?: string }) {
     setIsWorking(true);
     setStatus("Creating draft campaign...");
     try {
+      const selectedVariant = plan.plan.message_variants[selectedVariantIndex] ?? plan.plan.message_variants[0];
       const campaign = await post<{ id: string }>(`${CLIENT_API_BASE}/campaigns`, {
         agent_run_id: plan.agent_run_id ?? undefined,
         name: plan.plan.campaign_name,
         goal: plan.plan.goal,
         channel: plan.plan.recommended_channel,
         segment_rules: plan.plan.recommended_segment.rules,
-        message_template: plan.plan.message_variants[0].template,
-        approved_plan: plan.plan,
+        message_template: selectedVariant.template,
+        approved_plan: { ...plan.plan, selected_message_variant: selectedVariant },
       });
       setCampaignId(campaign.id);
       setStatus("Draft created. Approval is required before sending.");
@@ -161,7 +164,20 @@ export function AgentCampaignForm({ initialGoal }: { initialGoal?: string }) {
             </div>
             <div className="row">
               <strong>Message</strong>
-              <p>{plan.plan.message_variants[0].template}</p>
+              <div className="variant-list">
+                {plan.plan.message_variants.map((variant, index) => (
+                  <button
+                    type="button"
+                    className={`variant-option ${index === selectedVariantIndex ? "active" : ""}`}
+                    key={`${variant.label}-${index}`}
+                    onClick={() => setSelectedVariantIndex(index)}
+                    disabled={isWorking || !!campaignId}
+                  >
+                    <span>{variant.label}</span>
+                    <strong>{variant.template}</strong>
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="chips">
               {plan.plan.risk_notes.map((note) => (

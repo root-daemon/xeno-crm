@@ -37,6 +37,7 @@ flowchart LR
 - Deterministic local fallback when the model is rate-limited or the key is absent, so the planner never hard-fails and reviewers can always run the app.
 - Approval-gated execution: the agent can draft campaigns but cannot send without marketer approval.
 - Agent tool trace persisted in `agent_runs`.
+- Post-campaign agent analysis summarizes results, charts funnel/failure patterns, and recommends next actions.
 
 ## Deploy (Vercel + Render + RDS + Upstash)
 
@@ -138,7 +139,7 @@ bun --cwd apps/worker test
 3. Ask: `Win back shoppers who have not purchased in 60 days with a personalized WhatsApp or SMS offer.`
 4. Review the agent plan and create a campaign draft.
 5. Approve and send.
-6. Watch the fake channel service callbacks update performance.
+6. Watch the fake channel service callbacks update performance, failure-cause charts, and AI post-campaign analysis.
 
 ## Scale Decisions
 

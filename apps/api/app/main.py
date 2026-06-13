@@ -16,6 +16,7 @@ from .migrations import run_migrations
 from .schemas import AgentPlanRequest, CampaignCreateRequest, CustomerIn, OrderIn, ReceiptIn, SegmentCreateRequest, SegmentPreviewRequest
 from .services import (
     apply_receipt,
+    campaign_analysis,
     campaign_insights,
     campaign_to_dict,
     customer_detail,
@@ -145,7 +146,7 @@ def segment_preview(payload: SegmentPreviewRequest, db: Session = Depends(get_db
 
 @app.post("/agent/campaign-plan")
 def campaign_plan(payload: AgentPlanRequest, db: Session = Depends(get_db)) -> dict:
-    plan = build_campaign_plan(db, payload.goal)
+    plan = build_campaign_plan(db, payload.goal, payload.model)
     run = models.AgentRun(
         prompt=payload.goal,
         model=plan["model"],
@@ -298,6 +299,13 @@ def get_campaign_insights(campaign_id: str, db: Session = Depends(get_db)) -> di
     if not db.get(models.Campaign, campaign_id):
         raise HTTPException(status_code=404, detail="campaign not found")
     return campaign_insights(db, campaign_id)
+
+
+@app.get("/campaigns/{campaign_id}/analysis")
+def get_campaign_analysis(campaign_id: str, db: Session = Depends(get_db)) -> dict:
+    if not db.get(models.Campaign, campaign_id):
+        raise HTTPException(status_code=404, detail="campaign not found")
+    return campaign_analysis(db, campaign_id)
 
 
 @app.post("/receipts")
