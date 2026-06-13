@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import models
+from .config import settings
 from .seed import CAMPAIGNS, COMMUNICATIONS, CUSTOMERS, ORDERS, SEGMENTS
 from .time import utc_now
+
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover
+    OpenAI = None  # type: ignore
 
 STATUS_RANK = {
     "queued": 0,
@@ -151,6 +158,8 @@ def customer_rows(db: Session) -> list[dict[str, Any]]:
             "sms_opt_in": customer.sms_opt_in,
             "email_opt_in": customer.email_opt_in,
             "rcs_opt_in": customer.rcs_opt_in,
+            "global_opt_out": customer.global_opt_out,
+            "unsubscribed_at": customer.unsubscribed_at.isoformat() if customer.unsubscribed_at else None,
             "last_active_days_ago": customer.last_active_days_ago,
             "order_count": len(orders),
             "lifetime_value": sum(order.total for order in orders),
@@ -188,6 +197,8 @@ def order_rows(db: Session, customer_id: str) -> list[dict[str, Any]]:
             "items": order.items,
             "channel": order.channel,
             "days_ago": order.days_ago,
+            "attributed_communication_id": order.attributed_communication_id,
+            "attributed_campaign_id": order.attributed_campaign_id,
             "created_at": order.created_at.isoformat() if order.created_at else None,
         }
         for order in orders
@@ -268,13 +279,71 @@ def performance(db: Session, campaign_id: str) -> dict[str, Any]:
             if status in statuses:
                 counts[status] += 1
     counts["purchased"] = counts["converted"]
+    attributed_orders = db.scalars(select(models.Order).where(models.Order.attributed_campaign_id == campaign_id)).all()
+    attributed_revenue = sum(order.total for order in attributed_orders)
+    legacy_revenue = sum(message.attributed_revenue for message in communications)
     return {
         "campaign": campaign_to_dict(campaign) if campaign else None,
         "audience_size": len(communications) if communications else len(preview_segment(db, campaign.segment_rules)) if campaign else 0,
         "counts": counts,
-        "revenue": sum(message.attributed_revenue for message in communications),
+        "revenue": attributed_revenue or legacy_revenue,
+        "attribution": {
+            "window_days": 7,
+            "orders": len(attributed_orders),
+            "revenue": attributed_revenue,
+            "legacy_revenue": legacy_revenue,
+        },
+        "suppression": suppression_summary(db, campaign) if campaign else {"global_opt_out": 0, "frequency_cap": 0, "sendable": 0},
+        "variants": variant_metrics(communications),
         "communications": [communication_to_dict(message) for message in communications],
     }
+
+
+def suppression_summary(db: Session, campaign: models.Campaign) -> dict[str, int]:
+    audience = preview_segment(db, campaign.segment_rules)
+    cutoff = utc_now() - timedelta(days=7)
+    global_opt_out = 0
+    frequency_cap = 0
+    sendable = 0
+    for row in audience:
+        if row.get("global_opt_out"):
+            global_opt_out += 1
+            continue
+        recent = db.scalar(
+            select(func.count(models.Communication.id)).where(
+                models.Communication.customer_id == row["id"],
+                models.Communication.created_at >= cutoff,
+                models.Communication.campaign_id != campaign.id,
+            )
+        ) or 0
+        if recent:
+            frequency_cap += 1
+            continue
+        sendable += 1
+    return {
+        "global_opt_out": global_opt_out,
+        "frequency_cap": frequency_cap,
+        "suppressed": global_opt_out + frequency_cap,
+        "sendable": sendable,
+    }
+
+
+def variant_metrics(communications: list[models.Communication]) -> list[dict[str, Any]]:
+    bucket: dict[str, dict[str, Any]] = {}
+    for communication in communications:
+        label = communication.variant_label or "default"
+        item = bucket.setdefault(label, {"label": label, "sent": 0, "clicked": 0, "converted": 0, "revenue": 0.0})
+        statuses = set(implied_statuses(communication.status))
+        for event in communication.events:
+            statuses.update(implied_statuses(event.status))
+        if "sent" in statuses:
+            item["sent"] += 1
+        if "clicked" in statuses:
+            item["clicked"] += 1
+        if "converted" in statuses:
+            item["converted"] += 1
+        item["revenue"] += communication.attributed_revenue
+    return list(bucket.values())
 
 
 def implied_statuses(status: str) -> list[str]:
@@ -384,7 +453,7 @@ def campaign_analysis(db: Session, campaign_id: str) -> dict[str, Any]:
     if delivered and clicked / max(delivered, 1) < 0.25:
         next_actions.append("Test a sharper offer or message hook before increasing audience size.")
 
-    return {
+    analysis = {
         "summary": {
             "headline": analysis_headline(campaign, counts, audience_size, top_failure),
             "findings": findings[:5],
@@ -404,6 +473,51 @@ def campaign_analysis(db: Session, campaign_id: str) -> dict[str, Any]:
         },
         "failure_examples": failure_examples,
     }
+    analysis["summary"] = ai_analysis_summary(campaign, perf, analysis["summary"])
+    return analysis
+
+
+def ai_analysis_summary(campaign: models.Campaign, perf: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
+    if not settings.openrouter_api_key or OpenAI is None:
+        return fallback
+    try:
+        client = OpenAI(api_key=settings.openrouter_api_key, base_url=settings.openrouter_base_url)  # type: ignore[operator]
+        response = client.chat.completions.create(
+            model=settings.openrouter_model,
+            max_tokens=500,
+            temperature=0.2,
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Return JSON with headline, findings array, and next_actions array for a CRM campaign analysis.",
+                },
+                {
+                    "role": "user",
+                    "content": str({
+                        "campaign": {"name": campaign.name, "goal": campaign.goal, "channel": campaign.channel},
+                        "counts": perf.get("counts", {}),
+                        "revenue": perf.get("revenue", 0),
+                        "suppression": perf.get("suppression", {}),
+                        "variants": perf.get("variants", []),
+                        "fallback": fallback,
+                    }),
+                },
+            ],
+        )
+        text = response.choices[0].message.content
+        if not text:
+            return fallback
+        import json
+
+        payload = json.loads(text)
+        return {
+            "headline": str(payload.get("headline") or fallback["headline"])[:240],
+            "findings": [str(item) for item in payload.get("findings", fallback["findings"])][:5],
+            "next_actions": [str(item) for item in payload.get("next_actions", fallback["next_actions"])][:4],
+        }
+    except Exception:
+        return fallback
 
 
 def failure_metadata_for(message: models.Communication) -> dict[str, Any] | None:
@@ -519,7 +633,22 @@ def apply_receipt(db: Session, receipt: dict[str, Any]) -> dict[str, Any]:
     if receipt["status"] == "failed" or next_rank >= current_rank:
         communication.status = receipt["status"]
     if receipt["status"] == "converted":
-        communication.attributed_revenue += float(receipt.get("metadata", {}).get("order_value", 0))
+        value = float(receipt.get("metadata", {}).get("order_value", 0) or 0)
+        if value:
+            communication.attributed_revenue += value
+            order_id = str(receipt.get("metadata", {}).get("order_id") or f"ord_attr_{communication.id}")
+            if not db.get(models.Order, order_id):
+                db.add(models.Order(
+                    id=order_id,
+                    customer_id=communication.customer_id,
+                    total=value,
+                    items=receipt.get("metadata", {}).get("items", ["Attributed conversion"]),
+                    channel=communication.channel,
+                    days_ago=0,
+                    attributed_communication_id=communication.id,
+                    attributed_campaign_id=communication.campaign_id,
+                    attributed_at=receipt.get("occurred_at") or utc_now(),
+                ))
     reconcile_campaign_status(db, communication.campaign_id)
     db.commit()
     return {"accepted": True, "communication_id": communication.id, "status": communication.status}
@@ -592,6 +721,9 @@ def communication_to_dict(communication: models.Communication) -> dict[str, Any]
         "channel": communication.channel,
         "recipient": communication.recipient,
         "message": communication.message,
+        "variant_label": communication.variant_label,
+        "channel_priority": communication.channel_priority,
+        "fallback_of_communication_id": communication.fallback_of_communication_id,
         "status": communication.status,
         "attributed_revenue": communication.attributed_revenue,
         "created_at": communication.created_at.isoformat() if communication.created_at else None,

@@ -507,6 +507,134 @@ def test_campaign_analysis_aggregates_receipt_failure_metadata():
     assert payload["summary"]["next_actions"]
 
 
+def test_personalize_message_falls_back_without_key(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "openrouter_api_key", None)
+    plan = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"}).json()
+    campaign = client.post("/campaigns", json={
+        "agent_run_id": plan["agent_run_id"],
+        "name": plan["plan"]["campaign_name"],
+        "goal": plan["plan"]["goal"],
+        "channel": plan["plan"]["recommended_channel"],
+        "segment_rules": plan["plan"]["recommended_segment"]["rules"],
+        "message_template": "Hi {{name}}, your {{tier}} offer is ready in {{city}}.",
+        "approved_plan": plan["plan"],
+    }).json()
+
+    response = client.post("/agent/personalize-message", json={
+        "campaign_id": campaign["id"],
+        "customer_id": "cus_009",
+        "template": "Hi {{name}}, your {{tier}} offer is ready in {{city}}.",
+        "goal": campaign["goal"],
+        "channel": campaign["channel"],
+        "variant_label": "direct",
+    })
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["fallback"] is True
+    assert "Arjun" in payload["message"]
+    assert "{{" not in payload["message"]
+
+
+def test_personalize_message_uses_model(monkeypatch):
+    from app import agent
+    from app.config import settings
+
+    class FakeOpenAI:
+        def __init__(self, api_key, base_url):
+            self.chat = SimpleNamespace(completions=self)
+
+        def create(self, **kwargs):
+            assert kwargs["response_format"] == {"type": "json_object"}
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({
+                "message": "Hi Arjun, your coffee comeback edit is ready."
+            })))])
+
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-openrouter-key")
+    monkeypatch.setattr(agent, "OpenAI", FakeOpenAI)
+    plan = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"}).json()
+    campaign = client.post("/campaigns", json={
+        "agent_run_id": plan["agent_run_id"],
+        "name": plan["plan"]["campaign_name"],
+        "goal": plan["plan"]["goal"],
+        "channel": plan["plan"]["recommended_channel"],
+        "segment_rules": plan["plan"]["recommended_segment"]["rules"],
+        "message_template": "Hi {{name}}",
+        "approved_plan": plan["plan"],
+    }).json()
+
+    response = client.post("/agent/personalize-message", json={
+        "campaign_id": campaign["id"],
+        "customer_id": "cus_009",
+        "template": "Hi {{name}}",
+        "goal": campaign["goal"],
+        "channel": campaign["channel"],
+    })
+    assert response.status_code == 200
+    assert response.json()["message"] == "Hi Arjun, your coffee comeback edit is ready."
+    assert response.json()["fallback"] is False
+
+
+def test_refine_plan_returns_complete_approval_gated_plan(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "openrouter_api_key", None)
+    plan = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"}).json()["plan"]
+    response = client.post("/agent/campaign-plan/refine", json={
+        "prior_plan": plan,
+        "instruction": "Make it punchier and prefer SMS fallback",
+    })
+    assert response.status_code == 200
+    refined = response.json()["plan"]
+    assert refined["requires_approval"] is True
+    assert refined["recommended_channel"]
+    assert refined["message_variants"]
+    assert refined["channel_priority"]
+
+
+def test_conversion_receipt_creates_attributed_order_revenue():
+    plan = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"}).json()
+    campaign = client.post("/campaigns", json={
+        "agent_run_id": plan["agent_run_id"],
+        "name": plan["plan"]["campaign_name"],
+        "goal": plan["plan"]["goal"],
+        "channel": plan["plan"]["recommended_channel"],
+        "segment_rules": plan["plan"]["recommended_segment"]["rules"],
+        "message_template": plan["plan"]["message_variants"][0]["template"],
+        "approved_plan": plan["plan"],
+    }).json()
+
+    from app import models
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    db.add(models.Communication(
+        id="msg_attribution",
+        campaign_id=campaign["id"],
+        customer_id="cus_009",
+        channel="sms",
+        recipient={},
+        message="Hi",
+        status="clicked",
+    ))
+    db.commit()
+    db.close()
+
+    receipt = {
+        "event_id": "evt_attr_conversion",
+        "communication_id": "msg_attribution",
+        "campaign_id": campaign["id"],
+        "customer_id": "cus_009",
+        "status": "converted",
+        "metadata": {"order_value": 3499, "order_id": "ord_attr_test"},
+    }
+    assert client.post("/receipts", json=receipt).json()["accepted"] is True
+    performance = client.get(f"/campaigns/{campaign['id']}/performance").json()
+    assert performance["attribution"]["orders"] == 1
+    assert performance["revenue"] == 3499
+
+
 def test_campaign_performance_counts_converted_as_purchased():
     plan = client.post("/agent/campaign-plan", json={"goal": "Win back lapsed shoppers"}).json()
     campaign = client.post("/campaigns", json={

@@ -44,6 +44,7 @@ export const DEFAULT_MODEL_ID = "google/gemini-2.5-flash";
 
 export const SETTINGS_KEY = "xeno-ai-model";
 
-export function providerLabel(_provider: ModelProvider): string {
+export function providerLabel(provider: ModelProvider): string {
+  void provider;
   return "OpenRouter";
 }

@@ -1,8 +1,8 @@
-FROM node:22-alpine
+FROM oven/bun:1
 
 WORKDIR /app
-COPY package.json .
-RUN npm install
+COPY package.json ./
+RUN bun install
 COPY src ./src
 EXPOSE 9000
-CMD ["npm", "start"]
+CMD ["bun", "run", "start"]

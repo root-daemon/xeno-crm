@@ -9,11 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import models
-from .agent import build_campaign_plan, generate_segment
+from .agent import build_campaign_plan, generate_segment, personalize_message, refine_campaign_plan
 from .config import settings
 from .database import get_db
 from .migrations import run_migrations
-from .schemas import AgentPlanRequest, CampaignCreateRequest, CustomerIn, OrderIn, ReceiptIn, SegmentCreateRequest, SegmentFromPromptRequest, SegmentPreviewRequest
+from .schemas import AgentPlanRefineRequest, AgentPlanRequest, CampaignCreateRequest, CustomerIn, OrderIn, PersonalizeMessageRequest, ReceiptIn, SegmentCreateRequest, SegmentFromPromptRequest, SegmentPreviewRequest
 from .services import (
     apply_receipt,
     campaign_analysis,
@@ -91,6 +91,10 @@ def ingest_orders(payload: list[OrderIn], db: Session = Depends(get_db)) -> dict
         order_id = data.pop("id") or models.uid("ord")
         if not db.get(models.Customer, data["customer_id"]):
             raise HTTPException(status_code=422, detail=f"unknown customer_id: {data['customer_id']}")
+        if data.get("attributed_communication_id") and not db.get(models.Communication, data["attributed_communication_id"]):
+            raise HTTPException(status_code=422, detail=f"unknown attributed_communication_id: {data['attributed_communication_id']}")
+        if data.get("attributed_campaign_id") and not db.get(models.Campaign, data["attributed_campaign_id"]):
+            raise HTTPException(status_code=422, detail=f"unknown attributed_campaign_id: {data['attributed_campaign_id']}")
         existing = db.get(models.Order, order_id)
         if existing:
             for key, value in data.items():
@@ -161,6 +165,40 @@ def campaign_plan(payload: AgentPlanRequest, db: Session = Depends(get_db)) -> d
     db.commit()
     db.refresh(run)
     return {"agent_run_id": run.id, "plan": plan}
+
+
+@app.post("/agent/campaign-plan/refine")
+def campaign_plan_refine(payload: AgentPlanRefineRequest, db: Session = Depends(get_db)) -> dict:
+    plan = refine_campaign_plan(db, payload.prior_plan, payload.instruction, payload.model)
+    run = models.AgentRun(
+        prompt=payload.instruction,
+        model=plan["model"],
+        tool_calls=plan["tool_calls"],
+        final_recommendation=plan,
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return {"agent_run_id": run.id, "plan": plan}
+
+
+@app.post("/agent/personalize-message")
+def agent_personalize_message(payload: PersonalizeMessageRequest, db: Session = Depends(get_db)) -> dict:
+    if not db.get(models.Campaign, payload.campaign_id):
+        raise HTTPException(status_code=404, detail="campaign not found")
+    try:
+        return personalize_message(
+            db,
+            payload.campaign_id,
+            payload.customer_id,
+            payload.template,
+            payload.goal,
+            payload.channel,
+            payload.variant_label,
+            payload.model,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/agent/runs/{run_id}")
